@@ -1,0 +1,4 @@
+build/bin
+build/appicon.png
+node_modules
+frontend/dist
