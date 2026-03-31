@@ -9,6 +9,8 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/linux"
+
+	"qrypt/backend"
 )
 
 //go:embed all:frontend/dist
@@ -18,10 +20,10 @@ var assets embed.FS
 var qryptIcon []byte
 
 func main() {
-	app := NewApp()
+	app := backend.NewApp()
 
 	appOptions := &options.App{
-		AlwaysOnTop: AlwaysOnTop,
+		AlwaysOnTop: backend.AlwaysOnTop,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 			Middleware: func(next http.Handler) http.Handler {
@@ -42,8 +44,8 @@ func main() {
 		Bind: []interface{}{
 			app,
 		},
-		LogLevel: logger.INFO,
-		OnStartup: app.startup,
+		LogLevel:  logger.INFO,
+		OnStartup: app.Startup,
 		Title:     "Qrypt",
 		Width:     960,
 		Height:    640,

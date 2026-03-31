@@ -1,4 +1,4 @@
-package main
+package backend
 
 import (
 	"crypto/aes"
@@ -736,6 +736,19 @@ func contentDispositionInline(vaultPath string) string {
 	return fmt.Sprintf(`inline; filename="%s"; filename*=UTF-8''%s`, fallback, url.PathEscape(base))
 }
 
+func remoteAddrIsLoopback(r *http.Request) bool {
+	addr := r.RemoteAddr
+	if addr == "" {
+		return false
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 func decryptHandler(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	if token == "" {
@@ -777,6 +790,10 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 func startDecryptServer() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/decrypt", func(w http.ResponseWriter, r *http.Request) {
+		if !remoteAddrIsLoopback(r) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Expose-Headers", "Content-Disposition")
 		if r.Method == http.MethodOptions {
@@ -786,6 +803,7 @@ func startDecryptServer() error {
 		}
 		decryptHandler(w, r)
 	})
+	// Loopback only: not reachable from the LAN; RemoteAddr is also checked per request.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err

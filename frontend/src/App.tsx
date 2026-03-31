@@ -1,7 +1,7 @@
 import type { DragEvent, ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import * as Backend from "../wailsjs/go/main/App";
-import { main } from "../wailsjs/go/models";
+import * as Backend from "../wailsjs/go/backend/App";
+import { backend } from "../wailsjs/go/models";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -65,11 +65,11 @@ function canAcceptVaultPathDrop(dt: DataTransfer): boolean {
 
 type ChildRow =
   | { kind: "folder"; name: string; path: string }
-  | { kind: "entry"; entry: main.VaultFileEntry };
+  | { kind: "entry"; entry: backend.VaultFileEntry };
 
-function listChildRows(folderPrefix: string, entries: main.VaultFileEntry[]): ChildRow[] {
+function listChildRows(folderPrefix: string, entries: backend.VaultFileEntry[]): ChildRow[] {
   const p = folderPrefix === "" ? "" : folderPrefix + "/";
-  const map = new Map<string, main.VaultFileEntry | "implicit">();
+  const map = new Map<string, backend.VaultFileEntry | "implicit">();
 
   for (const e of entries) {
     if (folderPrefix !== "" && !e.path.startsWith(p)) continue;
@@ -149,8 +149,8 @@ function VaultVideoPreview({ src, className }: { src: string; className?: string
 
 export default function App() {
   const [unlocked, setUnlocked] = useState(false);
-  const [files, setFiles] = useState<main.VaultFileEntry[]>([]);
-  const [selected, setSelected] = useState<main.VaultFileEntry | null>(null);
+  const [files, setFiles] = useState<backend.VaultFileEntry[]>([]);
+  const [selected, setSelected] = useState<backend.VaultFileEntry | null>(null);
   const [decryptSrc, setDecryptSrc] = useState("");
   const [banner, setBanner] = useState<string | null>(null);
 
@@ -173,7 +173,7 @@ export default function App() {
   const [deleteTargetPath, setDeleteTargetPath] = useState<string | null>(null);
   const [dragOverTarget, setDragOverTarget] = useState<string | null>(null);
 
-  const refresh = useCallback(async (): Promise<main.VaultFileEntry[]> => {
+  const refresh = useCallback(async (): Promise<backend.VaultFileEntry[]> => {
     const ok = await Backend.VaultUnlocked();
     setUnlocked(ok);
     if (!ok) {
@@ -712,7 +712,7 @@ export default function App() {
 
       <Dialog
         open={createPwdOpen}
-        onOpenChange={(open) => {
+        onOpenChange={(open: boolean) => {
           if (!open && createVaultSubmitting) return;
           setCreatePwdOpen(open);
           if (!open) setCreateVaultSubmitting(false);
@@ -720,7 +720,7 @@ export default function App() {
       >
         <DialogContent
           showClose={!createVaultSubmitting}
-          onPointerDownOutside={(ev) => {
+          onPointerDownOutside={(ev: { preventDefault: () => void }) => {
             if (createVaultSubmitting) ev.preventDefault();
           }}
           onEscapeKeyDown={(ev) => {
@@ -775,7 +775,7 @@ export default function App() {
 
       <Dialog
         open={deleteOpen}
-        onOpenChange={(open) => {
+        onOpenChange={(open: boolean) => {
           setDeleteOpen(open);
           if (!open) setDeleteTargetPath(null);
         }}
@@ -808,7 +808,7 @@ export default function App() {
 
       <Dialog
         open={renameOpen}
-        onOpenChange={(open) => {
+        onOpenChange={(open: boolean) => {
           setRenameOpen(open);
           if (!open) setRenameTargetPath(null);
         }}

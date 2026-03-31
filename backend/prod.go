@@ -1,5 +1,5 @@
 //go:build !dev
 
-package main
+package backend
 
 const AlwaysOnTop = false
