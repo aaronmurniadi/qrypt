@@ -2,6 +2,7 @@
   "$schema": "https://wails.io/schemas/config.v2.json",
   "name": "qrypt",
   "outputfilename": "qrypt",
+  "version": "0.1.0",
   "preBuildHooks": {
     "*/*": "go run ../../tools/sync-appicon"
   },

@@ -25,7 +25,7 @@ import (
 
 const (
 	vaultMagic      = "QRYPTV01"
-	formatV3AES     = uint32(3)
+	formatV1AES     = uint32(3)
 	headerSize      = 4096
 	headerMetaOffV3 = 56
 	gcmNonceSize    = 12
@@ -85,7 +85,7 @@ func parseHeader(buf []byte) (vaultHeader, error) {
 		return h, errors.New("invalid vault magic")
 	}
 	ver := binary.LittleEndian.Uint32(buf[8:12])
-	if ver != formatV3AES {
+	if ver != formatV1AES {
 		return h, fmt.Errorf("unsupported vault format %d (create a new vault with this app version)", ver)
 	}
 	h.Format = ver
@@ -274,7 +274,7 @@ func createVault(path, password string) error {
 	dataEnd := uint64(headerSize) + catEncLen
 
 	h := vaultHeader{
-		Format:         formatV3AES,
+		Format:         formatV1AES,
 		Salt:           salt,
 		ArgonTime:      argonTime,
 		ArgonMemoryKiB: argonMemKiB,
