@@ -6,7 +6,7 @@ on:
       branch:
         description: 'Branch containing Dockerfile'
         required: true
-        default: 'v3-alpha'
+        default: 'main'
       sdk_version:
         description: 'macOS SDK version'
         required: true
@@ -26,9 +26,7 @@ on:
         type: boolean
   push:
     branches:
-      - v3-alpha
-    paths:
-      - 'v3/internal/commands/build_assets/docker/Dockerfile.cross'
+      - main
 
 env:
   REGISTRY: ghcr.io
