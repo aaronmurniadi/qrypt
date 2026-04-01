@@ -8,35 +8,37 @@ on:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runs_on }}
     permissions:
       contents: write
+    timeout-minutes: 30
 
     strategy:
       matrix:
-        goos: [linux, windows, darwin]
-        goarch: [amd64, arm64]
-        exclude:
-          # Exclude windows/arm64 build for now
-          - goos: windows
-            goarch: arm64
         include:
-          # Add specific platform combinations
+          # Linux builds
           - goos: linux
             goarch: amd64
             output_name: qrypt-linux-amd64
+            runs_on: ubuntu-latest
           - goos: linux
             goarch: arm64
             output_name: qrypt-linux-arm64
+            runs_on: ubuntu-latest
+          # Windows builds (use Windows runners)
           - goos: windows
             goarch: amd64
             output_name: qrypt-windows-amd64.exe
+            runs_on: windows-latest
+          # macOS builds
           - goos: darwin
             goarch: amd64
             output_name: qrypt-macos-amd64
+            runs_on: macos-latest
           - goos: darwin
             goarch: arm64
             output_name: qrypt-macos-arm64
+            runs_on: macos-latest
 
     steps:
       - name: Checkout code
@@ -75,23 +77,10 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 1
         run: |
-          # Set up cross-compilation for macOS
-          if [ "$GOOS" = "darwin" ]; then
-            if [ "$GOARCH" = "arm64" ]; then
-              # Install macOS cross-compilation dependencies
-              sudo apt-get update
-              sudo apt-get install -y clang libclang-dev
-              export CC=clang
-              export CXX=clang++
-            fi
-          fi
-          
-          # Set up cross-compilation for Windows
-          if [ "$GOOS" = "windows" ]; then
+          # Install platform-specific dependencies
+          if [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get update
-            sudo apt-get install -y gcc-mingw-w64-x86-64
-            export CC=x86_64-w64-mingw32-gcc
-            export CXX=x86_64-w64-mingw32-g++
+            sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libglib2.0-dev libpango1.0-dev libcairo2-dev libgdk-pixbuf2.0-dev
           fi
           
           wails build -platform ${{ matrix.goos }}/${{ matrix.goarch }} -clean
@@ -102,6 +91,7 @@ jobs:
           elif [ -f "build/bin/qrypt.exe" ]; then
             mv build/bin/qrypt.exe build/bin/${{ matrix.output_name }}
           fi
+        shell: bash
 
       - name: Get version info
         id: version
