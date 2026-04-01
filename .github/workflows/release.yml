@@ -1,0 +1,194 @@
+name: Create Release on Merge to Main
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    strategy:
+      matrix:
+        goos: [linux, windows, darwin]
+        goarch: [amd64, arm64]
+        exclude:
+          # Exclude windows/arm64 build for now
+          - goos: windows
+            goarch: arm64
+        include:
+          # Add specific platform combinations
+          - goos: linux
+            goarch: amd64
+            output_name: qrypt-linux-amd64
+          - goos: linux
+            goarch: arm64
+            output_name: qrypt-linux-arm64
+          - goos: windows
+            goarch: amd64
+            output_name: qrypt-windows-amd64.exe
+          - goos: darwin
+            goarch: amd64
+            output_name: qrypt-macos-amd64
+          - goos: darwin
+            goarch: arm64
+            output_name: qrypt-macos-arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm install
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm run build
+
+      - name: Build application
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 1
+        run: |
+          # Set up cross-compilation for macOS
+          if [ "$GOOS" = "darwin" ]; then
+            if [ "$GOARCH" = "arm64" ]; then
+              # Install macOS cross-compilation dependencies
+              sudo apt-get update
+              sudo apt-get install -y clang libclang-dev
+              export CC=clang
+              export CXX=clang++
+            fi
+          fi
+          
+          # Set up cross-compilation for Windows
+          if [ "$GOOS" = "windows" ]; then
+            sudo apt-get update
+            sudo apt-get install -y gcc-mingw-w64-x86-64
+            export CC=x86_64-w64-mingw32-gcc
+            export CXX=x86_64-w64-mingw32-g++
+          fi
+          
+          wails build -platform ${{ matrix.goos }}/${{ matrix.goarch }} -clean
+          
+          # Rename the output file
+          if [ -f "build/bin/qrypt" ]; then
+            mv build/bin/qrypt build/bin/${{ matrix.output_name }}
+          elif [ -f "build/bin/qrypt.exe" ]; then
+            mv build/bin/qrypt.exe build/bin/${{ matrix.output_name }}
+          fi
+
+      - name: Get version info
+        id: version
+        run: |
+          # Get the latest tag
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          
+          # Generate new version number (increment patch)
+          NEW_VERSION=$(echo $LATEST_TAG | awk -F. '{print $1"."$2"."$3+1}')
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          
+          # Get commit hash
+          COMMIT_HASH=$(git rev-parse --short HEAD)
+          echo "commit_hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
+          
+          # Get commit message
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          echo "commit_msg=$COMMIT_MSG" >> $GITHUB_OUTPUT
+
+      - name: Upload Release Assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.output_name }}
+          path: build/bin/${{ matrix.output_name }}
+          retention-days: 1
+
+  create_release:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Get version info
+        id: version
+        run: |
+          # Get the latest tag
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          
+          # Generate new version number (increment patch)
+          NEW_VERSION=$(echo $LATEST_TAG | awk -F. '{print $1"."$2"."$3+1}')
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          
+          # Get commit hash
+          COMMIT_HASH=$(git rev-parse --short HEAD)
+          echo "commit_hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
+          
+          # Get commit message
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          echo "commit_msg=$COMMIT_MSG" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.new_version }}
+          name: Release ${{ steps.version.outputs.new_version }}
+          body: |
+            ## Changes
+            ${{ steps.version.outputs.commit_msg }}
+            
+            **Commit:** ${{ steps.version.outputs.commit_hash }}
+            
+            ### Installation
+            Download the appropriate binary for your platform from the assets below.
+            
+            ### Available Binaries
+            - **Linux AMD64**: `qrypt-linux-amd64`
+            - **Linux ARM64**: `qrypt-linux-arm64`
+            - **Windows AMD64**: `qrypt-windows-amd64.exe`
+            - **macOS Intel (AMD64)**: `qrypt-macos-amd64`
+            - **macOS Apple Silicon (ARM64)**: `qrypt-macos-arm64`
+          files: |
+            artifacts/*/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
