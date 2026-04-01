@@ -26,7 +26,7 @@ func (a *App) PickNewVaultPath() (string, error) {
 		Title:           "Create secure vault",
 		DefaultFilename: "vault.qrypt",
 		Filters: []runtime.FileFilter{
-			{DisplayName: "Qrypt vault", Pattern: "*.qrypt;*"},
+			{DisplayName: "QrypT vault", Pattern: "*.qrypt;*"},
 		},
 	})
 }
@@ -45,7 +45,7 @@ func (a *App) PickExistingVaultPath() (string, error) {
 	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
 		Title: "Open secure vault",
 		Filters: []runtime.FileFilter{
-			{DisplayName: "Qrypt vault", Pattern: "*.qrypt;*"},
+			{DisplayName: "QrypT vault", Pattern: "*.qrypt;*"},
 		},
 	})
 }

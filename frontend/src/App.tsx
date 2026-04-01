@@ -522,11 +522,11 @@ export default function App() {
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       <header className="border-b px-4 py-3 flex flex-wrap items-center gap-2">
         <button
-          className="text-lg font-semibold tracking-tight mr-4 hover:opacity-80 transition-opacity flex items-center gap-2"
+          className="text-lg font-semibold tracking-tight hover:opacity-80 transition-opacity flex items-center gap-2"
           onClick={() => setAboutOpen(true)}
         >
-          <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center text-white font-bold text-sm">
-            Q
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm outline outline-1 outline-border">
+            i
           </div>
         </button>
         <Button type="button" variant="outline" size="sm" onClick={() => void onCreateNew()}>

@@ -49,7 +49,7 @@ func main() {
 		},
 		LogLevel:  logger.INFO,
 		OnStartup: app.Startup,
-		Title:     "Qrypt",
+		Title:     "QrypT",
 		Width:     960,
 		Height:    640,
 		MinWidth:  720,
