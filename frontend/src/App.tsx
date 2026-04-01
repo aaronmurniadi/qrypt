@@ -2,6 +2,7 @@ import type { DragEvent, ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as Backend from "../wailsjs/go/backend/App";
 import { backend } from "../wailsjs/go/models";
+import { OnFileDrop, OnFileDropOff } from "../wailsjs/runtime/runtime";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -43,8 +44,9 @@ function isVideo(mime: string) {
 }
 
 function basename(path: string) {
-  const i = path.lastIndexOf("/");
-  return i >= 0 ? path.slice(i + 1) : path;
+  const n = path.replace(/\\/g, "/");
+  const i = n.lastIndexOf("/");
+  return i >= 0 ? n.slice(i + 1) : n;
 }
 
 const QRYPT_DND = "application/x-qrypt-path";
@@ -151,6 +153,7 @@ export default function App() {
   const [unlocked, setUnlocked] = useState(false);
   const [files, setFiles] = useState<backend.VaultFileEntry[]>([]);
   const [selected, setSelected] = useState<backend.VaultFileEntry | null>(null);
+  const [detectedMime, setDetectedMime] = useState<string>("");
   const [decryptSrc, setDecryptSrc] = useState("");
   const [banner, setBanner] = useState<string | null>(null);
 
@@ -199,24 +202,93 @@ export default function App() {
     void refresh();
   }, [refresh]);
 
+  const folderPrefixRef = useRef(folderPrefix);
+  useEffect(() => {
+    folderPrefixRef.current = folderPrefix;
+  }, [folderPrefix]);
+
+  const refreshRef = useRef(refresh);
+  useEffect(() => {
+    refreshRef.current = refresh;
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!unlocked) {
+      try {
+        OnFileDropOff();
+      } catch {
+        /* wails runtime unavailable (e.g. plain browser) */
+      }
+      return;
+    }
+    OnFileDrop(async (_x, _y, paths: string[]) => {
+      if (!paths?.length) return;
+      setBanner(null);
+      const folder = folderPrefixRef.current;
+      const errs: string[] = [];
+      for (const p of paths) {
+        if (!p) continue;
+        try {
+          await Backend.AddFileFromPathToVault(p, folder);
+        } catch (e) {
+          errs.push(`${basename(p)}: ${formatErr(e)}`);
+        }
+      }
+      await refreshRef.current();
+      if (errs.length > 0) {
+        const head = errs.slice(0, 5).join("\n");
+        const more = errs.length > 5 ? `\n… and ${errs.length - 5} more` : "";
+        setBanner(head + more);
+      }
+    }, false);
+    return () => {
+      try {
+        OnFileDropOff();
+      } catch {
+        /* */
+      }
+    };
+  }, [unlocked]);
+
   useEffect(() => {
     if (!unlocked || !selected || selected.isDir) {
       setDecryptSrc("");
+      setDetectedMime("");
       return;
     }
     let cancelled = false;
     setDecryptSrc("");
+    setDetectedMime("");
     Backend.DecryptURLForVaultPath(selected.path)
       .then((url) => {
-        if (!cancelled) setDecryptSrc(url);
+        if (!cancelled) {
+          setDecryptSrc(url);
+          // Detect MIME type from actual content
+          fetch(url, { method: 'HEAD' })
+            .then(response => {
+              if (!cancelled && response.ok) {
+                const contentType = response.headers.get('Content-Type');
+                if (contentType) {
+                  setDetectedMime(contentType.split(';')[0]); // Remove charset if present
+                }
+              }
+            })
+            .catch(() => {
+              // Fallback to stored MIME type
+              if (!cancelled) setDetectedMime(selected.mime);
+            });
+        }
       })
       .catch(() => {
-        if (!cancelled) setDecryptSrc("");
+        if (!cancelled) {
+          setDecryptSrc("");
+          setDetectedMime("");
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [unlocked, selected?.path, selected?.isDir]);
+  }, [unlocked, selected?.path, selected?.isDir, selected?.mime]);
 
   useEffect(() => {
     if (!selected || !decryptSrc || !unlocked) {
@@ -224,7 +296,8 @@ export default function App() {
       setTextLoading(false);
       return;
     }
-    if (!isTextLike(selected.mime)) {
+    const mimeToCheck = detectedMime || selected.mime;
+    if (!isTextLike(mimeToCheck)) {
       setTextPreview(null);
       setTextLoading(false);
       return;
@@ -254,7 +327,7 @@ export default function App() {
       setTextPreview(null);
       setTextLoading(false);
     };
-  }, [selected, decryptSrc, unlocked]);
+  }, [selected, decryptSrc, unlocked, detectedMime]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -525,7 +598,7 @@ export default function App() {
               className={cn(
                 "rounded px-1.5 py-0.5 hover:bg-accent text-muted-foreground hover:text-foreground",
                 dragOverTarget === "drop-root" &&
-                  "ring-2 ring-primary ring-offset-2 ring-offset-background",
+                "ring-2 ring-primary ring-offset-2 ring-offset-background",
               )}
               onClick={() => {
                 setFolderPrefix("");
@@ -546,7 +619,7 @@ export default function App() {
                     className={cn(
                       "rounded px-1 py-0.5 hover:bg-accent hover:text-foreground max-w-[7rem] truncate",
                       dragOverTarget === crumbId &&
-                        "ring-2 ring-primary ring-offset-2 ring-offset-background",
+                      "ring-2 ring-primary ring-offset-2 ring-offset-background",
                     )}
                     title={prefixUpTo}
                     onClick={() => {
@@ -579,7 +652,7 @@ export default function App() {
                       className={cn(
                         "w-full text-left rounded-md px-2 py-1.5 text-sm truncate hover:bg-accent flex items-center gap-2",
                         dragOverTarget === `drop-folder:${row.path}` &&
-                          "ring-2 ring-inset ring-primary",
+                        "ring-2 ring-inset ring-primary",
                       )}
                     >
                       <Folder className="size-4 shrink-0 text-muted-foreground" />
@@ -598,7 +671,7 @@ export default function App() {
                       className={cn(
                         "w-full text-left rounded-md px-2 py-1.5 text-sm truncate hover:bg-accent flex items-center gap-2",
                         dragOverTarget === `drop-folder:${row.entry.path}` &&
-                          "ring-2 ring-inset ring-primary",
+                        "ring-2 ring-inset ring-primary",
                       )}
                     >
                       <Folder className="size-4 shrink-0 text-muted-foreground" />
@@ -685,16 +758,16 @@ export default function App() {
                     Delete
                   </Button>
                 </div>
-                {isImage(selected.mime) ? (
+                {isImage(detectedMime || selected.mime) ? (
                   <img
                     key={selected.path}
                     src={decryptSrc}
                     alt={basename(selected.path)}
                     className="max-h-[calc(100vh-8rem)] max-w-full rounded-md border object-contain"
-                />
-                ) : isVideo(selected.mime) ? (
+                  />
+                ) : isVideo(detectedMime || selected.mime) ? (
                   <VaultVideoPreview key={selected.path} src={decryptSrc} />
-                ) : isTextLike(selected.mime) ? (
+                ) : isTextLike(detectedMime || selected.mime) ? (
                   <div className="rounded-md border bg-muted/30 p-3 font-mono text-sm whitespace-pre-wrap break-words max-w-full">
                     {textLoading ? "Loading…" : (textPreview ?? "")}
                   </div>

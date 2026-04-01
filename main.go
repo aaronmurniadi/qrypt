@@ -24,6 +24,9 @@ func main() {
 
 	appOptions := &options.App{
 		AlwaysOnTop: backend.AlwaysOnTop,
+		DragAndDrop: &options.DragAndDrop{
+			EnableFileDrop: true,
+		},
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 			Middleware: func(next http.Handler) http.Handler {

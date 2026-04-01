@@ -3,6 +3,8 @@ package backend
 import (
 	"context"
 	"errors"
+	"os"
+	"strings"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -90,6 +92,21 @@ func (a *App) AddFileToVault(folder string) error {
 		return errors.New("cancelled")
 	}
 	return addFileToVault(path, folder)
+}
+
+func (a *App) AddFileFromPathToVault(srcPath, folder string) error {
+	srcPath = strings.TrimSpace(srcPath)
+	if srcPath == "" {
+		return errors.New("empty path")
+	}
+	st, err := os.Stat(srcPath)
+	if err != nil {
+		return err
+	}
+	if st.IsDir() {
+		return errors.New("cannot add a folder; drop one or more files")
+	}
+	return addFileToVault(srcPath, folder)
 }
 
 func (a *App) CreateVaultFolder(path string) error {
