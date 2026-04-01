@@ -16,6 +16,8 @@ export function DeleteVaultPath(arg1:string):Promise<void>;
 
 export function FinalizeNewVault(arg1:string,arg2:string):Promise<void>;
 
+export function GetSystemTheme():Promise<string>;
+
 export function ListVaultFiles():Promise<Array<backend.VaultFileEntry>>;
 
 export function LockVault():Promise<void>;

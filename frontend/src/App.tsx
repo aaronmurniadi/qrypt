@@ -176,6 +176,7 @@ export default function App() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteTargetPath, setDeleteTargetPath] = useState<string | null>(null);
   const [dragOverTarget, setDragOverTarget] = useState<string | null>(null);
+  const [systemTheme, setSystemTheme] = useState<"light" | "dark">("light");
 
   const refresh = useCallback(async (): Promise<backend.VaultFileEntry[]> => {
     const ok = await Backend.VaultUnlocked();
@@ -202,6 +203,37 @@ export default function App() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Detect and apply system theme
+  useEffect(() => {
+    const detectTheme = async () => {
+      try {
+        const theme = await Backend.GetSystemTheme();
+        setSystemTheme(theme as "light" | "dark");
+      } catch {
+        // Fallback to browser preference if backend detection fails
+        const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        setSystemTheme(prefersDark ? "dark" : "light");
+      }
+    };
+
+    detectTheme();
+
+    // Listen for system theme changes
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = () => {
+      setSystemTheme(mediaQuery.matches ? "dark" : "light");
+    };
+
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, []);
+
+  // Apply theme to document
+  useEffect(() => {
+    document.documentElement.classList.remove("light", "dark");
+    document.documentElement.classList.add(systemTheme);
+  }, [systemTheme]);
 
   const folderPrefixRef = useRef(folderPrefix);
   useEffect(() => {
@@ -520,26 +552,26 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
-      <header className="border-b px-4 py-3 flex flex-wrap items-center gap-2">
+      <header className="border-b px-4 py-3 flex flex-wrap items-center gap-2 draggable-region">
         <button
-          className="text-lg font-semibold tracking-tight hover:opacity-80 transition-opacity flex items-center gap-2"
+          className="text-lg font-semibold tracking-tight hover:opacity-80 transition-opacity flex items-center gap-2 non-draggable"
           onClick={() => setAboutOpen(true)}
         >
           <div className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm outline outline-1 outline-border">
             i
           </div>
         </button>
-        <Button type="button" variant="outline" size="sm" onClick={() => void onCreateNew()}>
+        <Button type="button" variant="outline" size="sm" onClick={() => void onCreateNew()} className="non-draggable">
           <PlusCircle className="size-4" aria-hidden />
           Create vault
         </Button>
-        <Button type="button" variant="outline" size="sm" onClick={() => void onOpenExisting()}>
+        <Button type="button" variant="outline" size="sm" onClick={() => void onOpenExisting()} className="non-draggable">
           <FolderOpen className="size-4" aria-hidden />
           Open vault
         </Button>
         {unlocked ? (
           <>
-            <Button type="button" size="sm" onClick={() => void onAddFile()}>
+            <Button type="button" size="sm" onClick={() => void onAddFile()} className="non-draggable">
               <FilePlus className="size-4" aria-hidden />
               Add file here
             </Button>
@@ -547,6 +579,7 @@ export default function App() {
               type="button"
               variant="outline"
               size="sm"
+              className="non-draggable"
               onClick={() => {
                 setNewFolderName("");
                 setNewFolderOpen(true);
@@ -559,7 +592,7 @@ export default function App() {
               type="button"
               variant="outline"
               size="sm"
-              className="text-destructive hover:text-destructive"
+              className="text-destructive hover:text-destructive non-draggable"
               onClick={() => void onLock()}
             >
               <Lock className="size-4" aria-hidden />
@@ -641,7 +674,7 @@ export default function App() {
               );
             })}
           </div>
-          <ul className="flex-1 overflow-auto px-1 pb-2 min-h-0">
+          <ul className="flex-1 overflow-auto px-1 pb-2 min-h-0 py-1">
             {files.length === 0 ? (
               <li className="px-2 py-3 text-sm text-muted-foreground">No files yet</li>
             ) : childRows.length === 0 ? (
@@ -649,7 +682,7 @@ export default function App() {
             ) : (
               childRows.map((row) =>
                 row.kind === "folder" ? (
-                  <li key={`dir:${row.path}`}>
+                  <li key={`dir:${row.path}`} className="py-1">
                     <button
                       type="button"
                       {...bindFolderDrop(`drop-folder:${row.path}`, row.path)}
@@ -658,7 +691,7 @@ export default function App() {
                         setSelected(null);
                       }}
                       className={cn(
-                        "w-full text-left rounded-md px-2 py-1.5 text-sm truncate hover:bg-accent flex items-center gap-2",
+                        "w-full text-left rounded-md px-2 py-1 text-sm truncate hover:bg-accent flex items-center gap-2",
                         dragOverTarget === `drop-folder:${row.path}` &&
                         "ring-2 ring-inset ring-primary",
                       )}
@@ -668,7 +701,7 @@ export default function App() {
                     </button>
                   </li>
                 ) : row.entry.isDir ? (
-                  <li key={`e:${row.entry.path}`}>
+                  <li key={`e:${row.entry.path}`} className="py-1">
                     <button
                       type="button"
                       {...bindFolderDrop(`drop-folder:${row.entry.path}`, row.entry.path)}
@@ -677,7 +710,7 @@ export default function App() {
                         setSelected(null);
                       }}
                       className={cn(
-                        "w-full text-left rounded-md px-2 py-1.5 text-sm truncate hover:bg-accent flex items-center gap-2",
+                        "w-full text-left rounded-md px-2 py-1 text-sm truncate hover:bg-accent flex items-center gap-2",
                         dragOverTarget === `drop-folder:${row.entry.path}` &&
                         "ring-2 ring-inset ring-primary",
                       )}
@@ -696,12 +729,13 @@ export default function App() {
                       e.dataTransfer.effectAllowed = "move";
                     }}
                     onDragEnd={() => setDragOverTarget(null)}
+                    className="py-1"
                   >
                     <button
                       type="button"
                       onClick={() => setSelected(row.entry)}
                       className={cn(
-                        "w-full text-left rounded-md px-2 py-1.5 text-sm truncate hover:bg-accent cursor-grab active:cursor-grabbing",
+                        "w-full text-left rounded-md px-2 py-1 text-sm truncate hover:bg-accent cursor-grab active:cursor-grabbing",
                         selected?.path === row.entry.path ? "bg-accent" : "",
                       )}
                     >

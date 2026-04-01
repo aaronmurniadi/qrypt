@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type App struct {
@@ -22,10 +24,10 @@ func (a *App) Startup(ctx context.Context) {
 }
 
 func (a *App) PickNewVaultPath() (string, error) {
-	return runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+	return wailsRuntime.SaveFileDialog(a.ctx, wailsRuntime.SaveDialogOptions{
 		Title:           "Create secure vault",
 		DefaultFilename: "vault.qrypt",
-		Filters: []runtime.FileFilter{
+		Filters: []wailsRuntime.FileFilter{
 			{DisplayName: "QrypT vault", Pattern: "*.qrypt;*"},
 		},
 	})
@@ -42,9 +44,9 @@ func (a *App) FinalizeNewVault(path, password string) error {
 }
 
 func (a *App) PickExistingVaultPath() (string, error) {
-	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+	return wailsRuntime.OpenFileDialog(a.ctx, wailsRuntime.OpenDialogOptions{
 		Title: "Open secure vault",
-		Filters: []runtime.FileFilter{
+		Filters: []wailsRuntime.FileFilter{
 			{DisplayName: "QrypT vault", Pattern: "*.qrypt;*"},
 		},
 	})
@@ -82,7 +84,7 @@ func (a *App) ListVaultFiles() ([]VaultFileEntry, error) {
 
 func (a *App) AddFileToVault(folder string) error {
 	// Do not set Filters on macOS: Wails maps patterns to extensions; "*" is invalid and greys out all files.
-	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+	path, err := wailsRuntime.OpenFileDialog(a.ctx, wailsRuntime.OpenDialogOptions{
 		Title: "Add file to vault",
 	})
 	if err != nil {
@@ -123,4 +125,70 @@ func (a *App) MoveVaultEntry(srcPath, destFolder string) error {
 
 func (a *App) RenameVaultFile(srcPath, newBaseName string) error {
 	return renameVaultFile(srcPath, newBaseName)
+}
+
+func (a *App) GetSystemTheme() (string, error) {
+	switch runtime.GOOS {
+	case "darwin":
+		// macOS: use defaults command to check appearance
+		cmd := exec.Command("defaults", "read", "-g", "AppleInterfaceStyle")
+		output, err := cmd.Output()
+		if err != nil {
+			// If command fails, assume light theme
+			return "light", nil
+		}
+		style := strings.TrimSpace(string(output))
+		if style == "Dark" {
+			return "dark", nil
+		}
+		return "light", nil
+
+	case "windows":
+		// Windows: check registry via PowerShell
+		cmd := exec.Command("powershell", "-Command",
+			"Get-ItemProperty -Path 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize' -Name 'AppsUseLightTheme' | Select-Object -ExpandProperty AppsUseLightTheme")
+		output, err := cmd.Output()
+		if err != nil {
+			return "light", nil
+		}
+		value := strings.TrimSpace(string(output))
+		if value == "0" {
+			return "dark", nil
+		}
+		return "light", nil
+
+	case "linux":
+		// Linux: check multiple possible sources
+		// Try GNOME/GTK theme first
+		if dconfCmd := exec.Command("dconf", "read", "/org/gnome/desktop/interface/gtk-theme"); dconfCmd != nil {
+			if output, err := dconfCmd.Output(); err == nil {
+				theme := strings.ToLower(strings.TrimSpace(string(output)))
+				if strings.Contains(theme, "dark") || strings.Contains(theme, "noir") {
+					return "dark", nil
+				}
+			}
+		}
+
+		// Try KDE theme
+		if kdeCmd := exec.Command("kreadconfig5", "--group", "Colors:Window", "--key", "BackgroundNormal"); kdeCmd != nil {
+			if output, err := kdeCmd.Output(); err == nil {
+				color := strings.TrimSpace(string(output))
+				if color != "" && color != "255,255,255" {
+					return "dark", nil
+				}
+			}
+		}
+
+		// Fallback: check environment variable
+		if theme := os.Getenv("GTK_THEME"); theme != "" {
+			if strings.Contains(strings.ToLower(theme), "dark") {
+				return "dark", nil
+			}
+		}
+
+		return "light", nil
+
+	default:
+		return "light", nil
+	}
 }

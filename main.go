@@ -9,6 +9,8 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/linux"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
+	"github.com/wailsapp/wails/v2/pkg/options/windows"
 
 	"qrypt/backend"
 )
@@ -18,6 +20,13 @@ var assets embed.FS
 
 //go:embed embed/qrypt.png
 var qryptIcon []byte
+
+var (
+	// Build-time variables
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
 
 func main() {
 	app := backend.NewApp()
@@ -43,6 +52,20 @@ func main() {
 		},
 		Linux: &linux.Options{
 			Icon: qryptIcon,
+		},
+		Windows: &windows.Options{
+			WebviewIsTransparent:              true,
+			WindowIsTranslucent:               false,
+			DisableFramelessWindowDecorations: false,
+		},
+		Mac: &mac.Options{
+			TitleBar: &mac.TitleBar{
+				TitlebarAppearsTransparent: false,
+				HideTitle:                  false,
+				HideTitleBar:               false,
+				FullSizeContent:            true,
+				UseToolbar:                 false,
+			},
 		},
 		Bind: []interface{}{
 			app,

@@ -30,6 +30,10 @@ export function FinalizeNewVault(arg1, arg2) {
   return window['go']['backend']['App']['FinalizeNewVault'](arg1, arg2);
 }
 
+export function GetSystemTheme() {
+  return window['go']['backend']['App']['GetSystemTheme']();
+}
+
 export function ListVaultFiles() {
   return window['go']['backend']['App']['ListVaultFiles']();
 }
