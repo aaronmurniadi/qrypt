@@ -2,7 +2,8 @@
 
 <div align="center">
 
-![QrypT Screenshot](images/screenshot.png)
+![QrypT Screenshot 1](images/screenshot-1.png)
+![QrypT Screenshot 2](images/screenshot-2.png)
 
 **Version**: 0.3.0
 
