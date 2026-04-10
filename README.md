@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![QrypT Logo](/embed/qrypt.png)
+![QrypT Screenshot](images/screenshot.png)
 
 **Version**: 0.1.0
 
@@ -11,9 +11,10 @@
 [![React](https://img.shields.io/badge/React-18+-61DAFB)](https://reactjs.org/)
 [![License](https://img.shields.io/badge/License-GPLv3-green.svg)](LICENSE)
 
+
 </div>
 
-**QrypT** is a modern, secure file vault application built with Go and React. It provides military-grade AES encryption for your sensitive files with an elegant, intuitive interface.
+**QrypT** is a modern, secure file vault application built with Go and React. It provides military-grade encryption for your sensitive files with an elegant, intuitive interface.
 
 > **🚧 Alpha Version Notice**: QrypT is currently in alpha development. Features may be incomplete, and there may be bugs. Please use with caution and do not store critical production data in this version.
 

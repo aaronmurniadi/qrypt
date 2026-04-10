@@ -18,6 +18,8 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  Check,
+  Link,
   Loader2,
   Lock,
   Pencil,
@@ -25,6 +27,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { logger } from "@/lib/logger";
 
 function formatErr(e: unknown): string {
   if (e instanceof Error) return e.message;
@@ -113,23 +116,31 @@ function listChildRows(folderPrefix: string, entries: backend.VaultFileEntry[]):
 function PreviewEmptyState({ children }: { children: ReactNode }) {
   return (
     <div className="flex-1 min-h-0 flex flex-col rounded-lg ring-1 ring-border/60 relative overflow-hidden bg-muted/10">
-      <div
-        className="pointer-events-none absolute inset-0 bg-contain bg-center bg-no-repeat opacity-[0.14] dark:opacity-[0.09]"
-        style={{ backgroundImage: "url(/qrypt.png)" }}
-        aria-hidden
-      />
-      <div className="relative z-10 flex flex-1 min-h-0 flex-col items-center justify-center p-6 text-center">
+      <div className="flex flex-1 min-h-0 flex-col items-center justify-center p-6 text-center">
         {children}
       </div>
     </div>
   );
 }
 
-function VaultVideoPreview({ src, className }: { src: string; className?: string }) {
+function VaultVideoPreview({ 
+  src, 
+  className,
+  onLoadedData,
+  onError,
+}: { 
+  src: string; 
+  className?: string;
+  onLoadedData?: () => void;
+  onError?: () => void;
+}) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
+    const v = ref.current;
+    if (v && v.readyState >= 2 && onLoadedData) {
+      onLoadedData();
+    }
     return () => {
-      const v = ref.current;
       if (!v) return;
       v.pause();
       v.removeAttribute("src");
@@ -141,6 +152,9 @@ function VaultVideoPreview({ src, className }: { src: string; className?: string
       ref={ref}
       src={src}
       controls
+      autoPlay
+      onLoadedData={onLoadedData}
+      onError={onError}
       className={
         className ??
         "max-h-[calc(100vh-8rem)] max-w-full rounded-md border bg-black"
@@ -154,7 +168,9 @@ export default function App() {
   const [files, setFiles] = useState<backend.VaultFileEntry[]>([]);
   const [selected, setSelected] = useState<backend.VaultFileEntry | null>(null);
   const [detectedMime, setDetectedMime] = useState<string>("");
-  const [decryptSrc, setDecryptSrc] = useState("");
+  // previewSrc holds a data: URI (images), blob: URL (video), or empty string.
+  const [previewSrc, setPreviewSrc] = useState("");
+  const [textPreview, setTextPreview] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
 
   const [createPwdOpen, setCreatePwdOpen] = useState(false);
@@ -163,8 +179,7 @@ export default function App() {
   const [password, setPassword] = useState("");
   const [createVaultSubmitting, setCreateVaultSubmitting] = useState(false);
 
-  const [textPreview, setTextPreview] = useState<string | null>(null);
-  const [textLoading, setTextLoading] = useState(false);
+  const [isMediaLoading, setIsMediaLoading] = useState(false);
 
   const [folderPrefix, setFolderPrefix] = useState("");
   const [newFolderOpen, setNewFolderOpen] = useState(false);
@@ -177,15 +192,17 @@ export default function App() {
   const [deleteTargetPath, setDeleteTargetPath] = useState<string | null>(null);
   const [dragOverTarget, setDragOverTarget] = useState<string | null>(null);
   const [systemTheme, setSystemTheme] = useState<"light" | "dark">("light");
+  const [copyLinkState, setCopyLinkState] = useState<"idle" | "copying" | "copied">("idle");
 
   const refresh = useCallback(async (): Promise<backend.VaultFileEntry[]> => {
+    logger.debug("Checking vault lock status...");
     const ok = await Backend.VaultUnlocked();
     setUnlocked(ok);
     if (!ok) {
       setFiles([]);
       setSelected(null);
       setFolderPrefix("");
-      setDecryptSrc("");
+      setPreviewSrc("");
       setTextPreview(null);
       return [];
     }
@@ -256,6 +273,7 @@ export default function App() {
     }
     OnFileDrop(async (_x, _y, paths: string[]) => {
       if (!paths?.length) return;
+      logger.info(`Drop event received with ${paths.length} items`);
       setBanner(null);
       const folder = folderPrefixRef.current;
       const errs: string[] = [];
@@ -263,7 +281,9 @@ export default function App() {
         if (!p) continue;
         try {
           await Backend.AddFileFromPathToVault(p, folder);
+          logger.debug(`Dropped item imported: ${p}`);
         } catch (e) {
+          logger.error(`Failed to import dropped item ${p}: ${formatErr(e)}`);
           errs.push(`${basename(p)}: ${formatErr(e)}`);
         }
       }
@@ -283,84 +303,73 @@ export default function App() {
     };
   }, [unlocked]);
 
+  // Decrypt selected file via IPC (no HTTP round-trip).
   useEffect(() => {
     if (!unlocked || !selected || selected.isDir) {
-      setDecryptSrc("");
+      setPreviewSrc("");
+      setTextPreview(null);
       setDetectedMime("");
+      setIsMediaLoading(false);
       return;
     }
+
     let cancelled = false;
-    setDecryptSrc("");
+    let blobUrl = "";
+    setPreviewSrc("");
+    setTextPreview(null);
     setDetectedMime("");
-    Backend.DecryptURLForVaultPath(selected.path)
-      .then((url) => {
-        if (!cancelled) {
-          setDecryptSrc(url);
-          // Detect MIME type from actual content
-          fetch(url, { method: 'HEAD' })
-            .then(response => {
-              if (!cancelled && response.ok) {
-                const contentType = response.headers.get('Content-Type');
-                if (contentType) {
-                  setDetectedMime(contentType.split(';')[0]); // Remove charset if present
-                }
-              }
-            })
-            .catch(() => {
-              // Fallback to stored MIME type
-              if (!cancelled) setDetectedMime(selected.mime);
-            });
+    setIsMediaLoading(true);
+
+    logger.debug(`Decrypting in-memory: ${selected.path}`);
+    Backend.GetDecryptedFileBase64(selected.path)
+      .then(({ data, mime }) => {
+        if (cancelled) return;
+        logger.info(`Decrypted: ${selected.path} (${mime})`);
+        setDetectedMime(mime ? mime.split(";")[0].trim() : "");
+        const effectiveMime = (mime || selected.mime || "application/octet-stream").split(";")[0].trim();
+
+        if (isTextLike(mime || selected.mime)) {
+          // Decode base64 → UTF-8 string directly, no fetch needed.
+          const text = decodeURIComponent(
+            atob(data)
+              .split("")
+              .map((c) => "%" + c.charCodeAt(0).toString(16).padStart(2, "0"))
+              .join("")
+          );
+          setTextPreview(text);
+          setIsMediaLoading(false);
+        } else if (isImage(effectiveMime)) {
+          // data: URI is safe for images of any size in a desktop WebView.
+          setPreviewSrc(`data:${effectiveMime};base64,${data}`);
+          // isMediaLoading cleared by <img> onLoad/onError
+        } else if (isVideo(effectiveMime)) {
+          // Build a Blob URL so the <video> element can seek properly.
+          const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+          const blob = new Blob([bytes], { type: effectiveMime });
+          blobUrl = URL.createObjectURL(blob);
+          setPreviewSrc(blobUrl);
+          // isMediaLoading cleared by VaultVideoPreview onLoadedData/onError
+        } else {
+          setIsMediaLoading(false);
         }
       })
-      .catch(() => {
-        if (!cancelled) {
-          setDecryptSrc("");
-          setDetectedMime("");
-        }
+      .catch((e) => {
+        if (cancelled) return;
+        logger.error(`Decrypt failed for ${selected.path}: ${formatErr(e)}`);
+        setPreviewSrc("");
+        setTextPreview(null);
+        setDetectedMime("");
+        setIsMediaLoading(false);
       });
+
     return () => {
       cancelled = true;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      setPreviewSrc("");
+      setTextPreview(null);
+      setIsMediaLoading(false);
     };
   }, [unlocked, selected?.path, selected?.isDir, selected?.mime]);
-
-  useEffect(() => {
-    if (!selected || !decryptSrc || !unlocked) {
-      setTextPreview(null);
-      setTextLoading(false);
-      return;
-    }
-    const mimeToCheck = detectedMime || selected.mime;
-    if (!isTextLike(mimeToCheck)) {
-      setTextPreview(null);
-      setTextLoading(false);
-      return;
-    }
-    const ac = new AbortController();
-    const u = decryptSrc;
-    setTextLoading(true);
-    setTextPreview(null);
-    fetch(u, { signal: ac.signal })
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.text();
-      })
-      .then((t) => {
-        if (!ac.signal.aborted) setTextPreview(t);
-      })
-      .catch((err: unknown) => {
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        if (!ac.signal.aborted) setTextPreview("Could not load text preview.");
-      })
-      .finally(() => {
-        if (!ac.signal.aborted) setTextLoading(false);
-      });
-
-    return () => {
-      ac.abort();
-      setTextPreview(null);
-      setTextLoading(false);
-    };
-  }, [selected, decryptSrc, unlocked, detectedMime]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -372,44 +381,80 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [createPwdOpen, openPwdOpen, renameOpen, newFolderOpen, deleteOpen]);
 
+  async function copyDecryptLink() {
+    if (!selected || copyLinkState !== "idle") return;
+    setCopyLinkState("copying");
+    try {
+      const relPath = await Backend.DecryptURLForVaultPath(selected.path);
+      // Wails WebView exposes wails://wails.localhost:PORT as the origin, but the
+      // actual HTTP server is http://localhost:PORT — rewrite it so the link works
+      // when opened in an external browser.
+      const origin = window.location.origin
+        .replace(/^wails:\/\/wails\.localhost/, "http://localhost");
+      const full = origin + relPath;
+      await navigator.clipboard.writeText(full);
+      logger.info(`Copied decrypt link for: ${selected.path}`);
+      setCopyLinkState("copied");
+      setTimeout(() => setCopyLinkState("idle"), 2000);
+    } catch (e) {
+      logger.error(`Failed to copy decrypt link: ${formatErr(e)}`);
+      setCopyLinkState("idle");
+    }
+  }
+
   async function onCreateNew() {
+    logger.info("Initiating new vault creation flow");
     setBanner(null);
     try {
       const path = await Backend.PickNewVaultPath();
-      if (!path) return;
+      if (!path) {
+        logger.debug("User cancelled PickNewVaultPath");
+        return;
+      }
+      logger.info(`Selected new vault path: ${path}`);
       setPendingPath(path);
       setPassword("");
       setCreatePwdOpen(true);
     } catch (e) {
+      logger.error(`Failed to pick new vault path: ${formatErr(e)}`);
       setBanner(formatErr(e));
     }
   }
 
   async function onOpenExisting() {
+    logger.info("Initiating open existing vault flow");
     setBanner(null);
     try {
       const path = await Backend.PickExistingVaultPath();
-      if (!path) return;
+      if (!path) {
+        logger.debug("User cancelled PickExistingVaultPath");
+        return;
+      }
+      logger.info(`Selected existing vault path: ${path}`);
       setPendingPath(path);
       setPassword("");
       setOpenPwdOpen(true);
     } catch (e) {
+      logger.error(`Failed to pick existing vault path: ${formatErr(e)}`);
       setBanner(formatErr(e));
     }
   }
 
   async function submitCreateVault() {
     if (createVaultSubmitting) return;
+    logger.info(`Finalizing new vault creation: ${pendingPath}`);
     setBanner(null);
     setCreateVaultSubmitting(true);
     try {
       await Backend.FinalizeNewVault(pendingPath, password);
+      logger.info("Vault created successfully");
       setCreatePwdOpen(false);
       setPassword("");
       setPendingPath("");
       setFolderPrefix("");
       await refresh();
     } catch (e) {
+      logger.error(`Failed to create vault: ${formatErr(e)}`);
       setBanner(formatErr(e));
     } finally {
       setCreateVaultSubmitting(false);
@@ -417,59 +462,76 @@ export default function App() {
   }
 
   async function submitOpenVault() {
+    logger.info(`Unlocking vault: ${pendingPath}`);
     setBanner(null);
     try {
       await Backend.UnlockVaultAtPath(pendingPath, password);
+      logger.info("Vault unlocked successfully");
       setOpenPwdOpen(false);
       setPassword("");
       setPendingPath("");
       setFolderPrefix("");
       await refresh();
     } catch (e) {
+      logger.error(`Failed to unlock vault: ${formatErr(e)}`);
       setBanner(formatErr(e));
     }
   }
 
   async function onLock() {
+    logger.info("Locking the current vault");
     setBanner(null);
     await Backend.LockVault();
     await refresh();
   }
 
   async function onAddFile() {
+    logger.info(`Adding file to folder: ${folderPrefix || "root"}`);
     setBanner(null);
     try {
       await Backend.AddFileToVault(folderPrefix);
+      logger.info("File successfully added to vault");
       await refresh();
     } catch (e) {
       const msg = formatErr(e);
-      if (msg !== "cancelled") setBanner(msg);
+      if (msg !== "cancelled") {
+        logger.error(`Failed to add file: ${msg}`);
+        setBanner(msg);
+      } else {
+        logger.debug("User cancelled add file dialog");
+      }
     }
   }
 
   async function submitNewFolder() {
-    setBanner(null);
     const name = newFolderName.trim();
+    logger.info(`Creating new folder: ${name}`);
+    setBanner(null);
     if (!name || name.includes("/") || name.includes("\\")) {
+      logger.warn("Invalid folder name attempted");
       setBanner("Enter a single folder name without slashes.");
       return;
     }
     const full = folderPrefix === "" ? name : `${folderPrefix}/${name}`;
     try {
       await Backend.CreateVaultFolder(full);
+      logger.info(`Folder created: ${full}`);
       setNewFolderOpen(false);
       setNewFolderName("");
       await refresh();
     } catch (e) {
+      logger.error(`Failed to create folder: ${formatErr(e)}`);
       setBanner(formatErr(e));
     }
   }
 
   async function submitRenameFile() {
-    setBanner(null);
     if (!renameTargetPath) return;
     const name = renameFileName.trim();
+    logger.info(`Renaming ${renameTargetPath} to ${name}`);
+    setBanner(null);
     if (!name || name.includes("/") || name.includes("\\")) {
+      logger.warn("Invalid rename target name attempted");
       setBanner("Enter a single file name without slashes.");
       return;
     }
@@ -479,31 +541,37 @@ export default function App() {
         : name;
     try {
       await Backend.RenameVaultFile(renameTargetPath, name);
+      logger.info(`Successfully renamed to ${newPath}`);
       setRenameOpen(false);
       setRenameTargetPath(null);
       const rows = await refresh();
       setSelected(rows.find((e) => e.path === newPath) ?? null);
     } catch (e) {
+      logger.error(`Failed to rename file: ${formatErr(e)}`);
       setBanner(formatErr(e));
     }
   }
 
   async function confirmDeleteFile() {
-    setBanner(null);
     if (!deleteTargetPath) return;
+    logger.warn(`Deleting file from vault: ${deleteTargetPath}`);
+    setBanner(null);
     try {
       await Backend.DeleteVaultPath(deleteTargetPath);
+      logger.info(`Successfully deleted file: ${deleteTargetPath}`);
       setDeleteOpen(false);
       if (selected?.path === deleteTargetPath) setSelected(null);
       setDeleteTargetPath(null);
       await refresh();
     } catch (e) {
+      logger.error(`Failed to delete file: ${formatErr(e)}`);
       setBanner(formatErr(e));
     }
   }
 
   const moveVaultFileToFolder = useCallback(
     async (srcPath: string, destFolder: string) => {
+      logger.info(`Moving file ${srcPath} to folder ${destFolder || "root"}`);
       setBanner(null);
       const rec = files.find((f) => f.path === srcPath);
       if (!rec || rec.isDir) return;
@@ -512,12 +580,14 @@ export default function App() {
       const newPath = destFolder === "" ? base : `${destFolder}/${base}`;
       try {
         await Backend.MoveVaultEntry(srcPath, destFolder);
+        logger.info("Successfully moved file");
         const rows = await refresh();
         setSelected((prev) => {
           if (prev?.path !== srcPath) return prev;
           return rows.find((r) => r.path === newPath) ?? null;
         });
       } catch (e) {
+        logger.error(`Failed to move file: ${formatErr(e)}`);
         setBanner(formatErr(e));
       }
     },
@@ -557,8 +627,8 @@ export default function App() {
           className="text-lg font-semibold tracking-tight hover:opacity-80 transition-opacity flex items-center gap-2 non-draggable"
           onClick={() => setAboutOpen(true)}
         >
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm outline outline-1 outline-border">
-            i
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base outline outline-1 outline-border">
+            🔒
           </div>
         </button>
         <Button type="button" variant="outline" size="sm" onClick={() => void onCreateNew()} className="non-draggable">
@@ -605,21 +675,7 @@ export default function App() {
         )}
       </header>
 
-      {unlocked ? (
-        <div className="border-b bg-muted/30 px-4 py-2 flex items-center gap-3 min-h-11">
-          <span className="text-xs font-medium text-muted-foreground whitespace-nowrap shrink-0">
-            Selected URL
-          </span>
-          <Input
-            readOnly
-            aria-label="Decrypt URL for the selected vault file"
-            className="font-mono text-xs h-8 flex-1 min-w-0"
-            value={decryptSrc}
-            placeholder="http://127.0.0.1:PORT/decrypt?token=…"
-            title={decryptSrc || undefined}
-          />
-        </div>
-      ) : null}
+
 
       {banner ? (
         <div className="mx-4 mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -628,7 +684,7 @@ export default function App() {
       ) : null}
 
       <div className="flex flex-1 min-h-0">
-        <aside className="w-64 shrink-0 border-r flex flex-col min-h-0">
+        <aside className={cn("w-64 shrink-0 border-r flex flex-col min-h-0", isMediaLoading && "pointer-events-none opacity-60")}>
           <div className="px-3 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wide border-b">
             Vault
           </div>
@@ -799,26 +855,58 @@ export default function App() {
                     <Trash2 className="size-4" aria-hidden />
                     Delete
                   </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={copyLinkState === "copying"}
+                    onClick={() => void copyDecryptLink()}
+                    title="Copy a one-time download link for the decrypted file"
+                  >
+                    {copyLinkState === "copied" ? (
+                      <Check className="size-4 text-green-500" aria-hidden />
+                    ) : copyLinkState === "copying" ? (
+                      <Loader2 className="size-4 animate-spin" aria-hidden />
+                    ) : (
+                      <Link className="size-4" aria-hidden />
+                    )}
+                    {copyLinkState === "copied" ? "Copied!" : "Copy link"}
+                  </Button>
                 </div>
-                {isImage(detectedMime || selected.mime) ? (
-                  <img
-                    key={selected.path}
-                    src={decryptSrc}
-                    alt={basename(selected.path)}
-                    className="max-h-[calc(100vh-8rem)] max-w-full rounded-md border object-contain"
-                  />
-                ) : isVideo(detectedMime || selected.mime) ? (
-                  <VaultVideoPreview key={selected.path} src={decryptSrc} />
-                ) : isTextLike(detectedMime || selected.mime) ? (
-                  <div className="rounded-md border bg-muted/30 p-3 font-mono text-sm whitespace-pre-wrap break-words max-w-full">
-                    {textLoading ? "Loading…" : (textPreview ?? "")}
+                <div className="relative w-full overflow-hidden min-h-[50vh]">
+                  {isMediaLoading && (
+                    <div className="absolute inset-0 z-20 flex items-center justify-center">
+                      <Loader2 className="size-8 animate-spin text-muted-foreground" />
+                    </div>
+                  )}
+                  <div className={cn("transition-opacity duration-300 w-full", isMediaLoading ? "opacity-0 absolute inset-0 pointer-events-none" : "opacity-100 relative")}>
+                  {isImage(detectedMime || selected.mime) ? (
+                    <img
+                      key={selected.path}
+                      src={previewSrc}
+                      alt={basename(selected.path)}
+                      className="max-h-[calc(100vh-8rem)] max-w-full rounded-md border object-contain inline-block"
+                      onLoad={() => setIsMediaLoading(false)}
+                      onError={() => setIsMediaLoading(false)}
+                    />
+                  ) : isVideo(detectedMime || selected.mime) ? (
+                    <VaultVideoPreview
+                      key={selected.path}
+                      src={previewSrc}
+                      onLoadedData={() => setIsMediaLoading(false)}
+                      onError={() => setIsMediaLoading(false)}
+                    />
+                  ) : isTextLike(detectedMime || selected.mime) ? (
+                    <div className="rounded-md border bg-muted/30 p-3 font-mono text-sm whitespace-pre-wrap break-words max-w-full">
+                      {textPreview ?? ""}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-muted-foreground space-y-2">
+                      <p>No built-in preview for this type ({selected.mime}).</p>
+                    </div>
+                  )}
                   </div>
-                ) : (
-                  <div className="text-sm text-muted-foreground space-y-2">
-                    <p>No built-in preview for this type ({selected.mime}).</p>
-                    <p className="font-mono text-xs break-all">{decryptSrc}</p>
-                  </div>
-                )}
+                </div>
               </div>
             </div>
           )}

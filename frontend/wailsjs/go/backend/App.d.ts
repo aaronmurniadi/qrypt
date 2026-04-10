@@ -8,19 +8,21 @@ export function AddFileToVault(arg1:string):Promise<void>;
 
 export function CreateVaultFolder(arg1:string):Promise<void>;
 
-export function DecryptServerURL():Promise<string>;
-
 export function DecryptURLForVaultPath(arg1:string):Promise<string>;
 
 export function DeleteVaultPath(arg1:string):Promise<void>;
 
 export function FinalizeNewVault(arg1:string,arg2:string):Promise<void>;
 
+export function GetDecryptedFileBase64(arg1:string):Promise<backend.DecryptedFile>;
+
 export function GetSystemTheme():Promise<string>;
 
 export function ListVaultFiles():Promise<Array<backend.VaultFileEntry>>;
 
 export function LockVault():Promise<void>;
+
+export function LogFrontend(arg1:string,arg2:string):Promise<void>;
 
 export function MoveVaultEntry(arg1:string,arg2:string):Promise<void>;
 

@@ -8,7 +8,6 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/logger"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/linux"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 
@@ -18,12 +17,9 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-//go:embed embed/qrypt.png
-var qryptIcon []byte
-
 var (
 	// Build-time variables
-	version = "dev"
+	version = "1.1.0"
 	commit  = "none"
 	date    = "unknown"
 )
@@ -32,7 +28,6 @@ func main() {
 	app := backend.NewApp()
 
 	appOptions := &options.App{
-		AlwaysOnTop: backend.AlwaysOnTop,
 		DragAndDrop: &options.DragAndDrop{
 			EnableFileDrop: true,
 		},
@@ -40,18 +35,13 @@ func main() {
 			Assets: assets,
 			Middleware: func(next http.Handler) http.Handler {
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if r.Method == http.MethodGet && r.URL.Path == "/qrypt.png" {
-						w.Header().Set("Content-Type", "image/png")
-						w.Header().Set("Cache-Control", "no-store")
-						_, _ = w.Write(qryptIcon)
+					if r.URL.Path == "/decrypt" {
+						backend.DecryptHandler(w, r)
 						return
 					}
 					next.ServeHTTP(w, r)
 				})
 			},
-		},
-		Linux: &linux.Options{
-			Icon: qryptIcon,
 		},
 		Windows: &windows.Options{
 			WebviewIsTransparent:              true,
@@ -70,6 +60,7 @@ func main() {
 		Bind: []interface{}{
 			app,
 		},
+		Logger:    backend.NewWailsLogger(),
 		LogLevel:  logger.INFO,
 		OnStartup: app.Startup,
 		Title:     "QrypT",

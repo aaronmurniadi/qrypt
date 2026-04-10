@@ -14,10 +14,6 @@ export function CreateVaultFolder(arg1) {
   return window['go']['backend']['App']['CreateVaultFolder'](arg1);
 }
 
-export function DecryptServerURL() {
-  return window['go']['backend']['App']['DecryptServerURL']();
-}
-
 export function DecryptURLForVaultPath(arg1) {
   return window['go']['backend']['App']['DecryptURLForVaultPath'](arg1);
 }
@@ -30,6 +26,10 @@ export function FinalizeNewVault(arg1, arg2) {
   return window['go']['backend']['App']['FinalizeNewVault'](arg1, arg2);
 }
 
+export function GetDecryptedFileBase64(arg1) {
+  return window['go']['backend']['App']['GetDecryptedFileBase64'](arg1);
+}
+
 export function GetSystemTheme() {
   return window['go']['backend']['App']['GetSystemTheme']();
 }
@@ -40,6 +40,10 @@ export function ListVaultFiles() {
 
 export function LockVault() {
   return window['go']['backend']['App']['LockVault']();
+}
+
+export function LogFrontend(arg1, arg2) {
+  return window['go']['backend']['App']['LogFrontend'](arg1, arg2);
 }
 
 export function MoveVaultEntry(arg1, arg2) {

@@ -2,14 +2,24 @@ package backend
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 
+	"github.com/rs/zerolog/log"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
+
+// DecryptedFile is the payload returned by GetDecryptedFileBase64.
+type DecryptedFile struct {
+	// Base64-encoded plaintext bytes.
+	Data string `json:"data"`
+	// MIME type, e.g. "image/png" or "text/plain; charset=utf-8".
+	Mime string `json:"mime"`
+}
 
 type App struct {
 	ctx context.Context
@@ -21,6 +31,7 @@ func NewApp() *App {
 
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
+	log.Info().Msg("QrypT backend service started")
 }
 
 func (a *App) PickNewVaultPath() (string, error) {
@@ -34,13 +45,20 @@ func (a *App) PickNewVaultPath() (string, error) {
 }
 
 func (a *App) FinalizeNewVault(path, password string) error {
+	log.Info().Str("path", path).Msg("Creating new vault")
 	if path == "" {
 		return errors.New("no path selected")
 	}
 	if password == "" {
 		return errors.New("password required")
 	}
-	return createVault(path, password)
+	err := createVault(path, password)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to create vault")
+	} else {
+		log.Info().Msg("Vault created successfully")
+	}
+	return err
 }
 
 func (a *App) PickExistingVaultPath() (string, error) {
@@ -53,16 +71,24 @@ func (a *App) PickExistingVaultPath() (string, error) {
 }
 
 func (a *App) UnlockVaultAtPath(path, password string) error {
+	log.Info().Str("path", path).Msg("Unlocking vault")
 	if path == "" {
 		return errors.New("no path selected")
 	}
 	if password == "" {
 		return errors.New("password required")
 	}
-	return openVaultWithPassword(path, password)
+	err := openVaultWithPassword(path, password)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to unlock vault")
+	} else {
+		log.Info().Msg("Vault unlocked successfully")
+	}
+	return err
 }
 
 func (a *App) LockVault() {
+	log.Info().Msg("Locking vault")
 	lockVault()
 }
 
@@ -70,12 +96,24 @@ func (a *App) VaultUnlocked() bool {
 	return vaultUnlocked()
 }
 
-func (a *App) DecryptServerURL() (string, error) {
-	return decryptServerURL()
-}
-
 func (a *App) DecryptURLForVaultPath(path string) (string, error) {
 	return issueDecryptURL(path)
+}
+
+// GetDecryptedFileBase64 decrypts the vault entry at path fully in-memory and
+// returns the plaintext encoded as base64 together with the detected MIME type.
+// The frontend uses this to build data: URIs or Blob URLs without hitting the
+// local HTTP decrypt server, which is inaccessible from an external browser.
+func (a *App) GetDecryptedFileBase64(path string) (DecryptedFile, error) {
+	raw, mime, err := decryptFileBytes(path)
+	if err != nil {
+		log.Error().Err(err).Str("path", path).Msg("GetDecryptedFileBase64 failed")
+		return DecryptedFile{}, err
+	}
+	return DecryptedFile{
+		Data: base64.StdEncoding.EncodeToString(raw),
+		Mime: mime,
+	}, nil
 }
 
 func (a *App) ListVaultFiles() ([]VaultFileEntry, error) {

@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -68,8 +67,6 @@ type vaultState struct {
 	chunkKey         []byte
 	pwdKey           []byte
 	files            []vaultFileRecord
-	srv              *http.Server
-	mediaBase        string
 	decryptToken     string
 	decryptVaultPath string
 }
@@ -229,10 +226,6 @@ func openVaultWithPassword(path, password string) error {
 	globalVault.chunkKey = chunkK
 	globalVault.files = files
 
-	if err := startDecryptServer(); err != nil {
-		globalVault.closeLocked()
-		return err
-	}
 	return nil
 }
 
@@ -305,10 +298,6 @@ func createVault(path, password string) error {
 	globalVault.chunkKey = chunkK
 	globalVault.files = nil
 
-	if err := startDecryptServer(); err != nil {
-		globalVault.closeLocked()
-		return err
-	}
 	return nil
 }
 
@@ -318,11 +307,6 @@ func (v *vaultState) closeLocked() {
 	v.chunkKey = nil
 	v.pwdKey = nil
 	v.files = nil
-	v.mediaBase = ""
-	if v.srv != nil {
-		_ = v.srv.Close()
-		v.srv = nil
-	}
 	if v.f != nil {
 		_ = v.f.Close()
 		v.f = nil
@@ -368,23 +352,11 @@ func listVaultFiles() ([]VaultFileEntry, error) {
 	return out, nil
 }
 
-func decryptServerURL() (string, error) {
-	globalVault.mu.RLock()
-	defer globalVault.mu.RUnlock()
-	if globalVault.mediaBase == "" {
-		return "", errVaultLocked
-	}
-	return globalVault.mediaBase, nil
-}
-
 func issueDecryptURL(p string) (string, error) {
 	globalVault.mu.Lock()
 	defer globalVault.mu.Unlock()
 	if globalVault.f == nil {
 		return "", errVaultLocked
-	}
-	if globalVault.mediaBase == "" {
-		return "", errors.New("decrypt server not started")
 	}
 	vp, err := validateVaultPath(p)
 	if err != nil {
@@ -410,7 +382,7 @@ func issueDecryptURL(p string) (string, error) {
 	token := hex.EncodeToString(tokBytes[:])
 	globalVault.decryptToken = token
 	globalVault.decryptVaultPath = vp
-	return globalVault.mediaBase + "/decrypt?token=" + url.QueryEscape(token), nil
+	return "/decrypt?token=" + url.QueryEscape(token), nil
 }
 
 func addFileToVault(srcPath, folderPrefix string) error {
@@ -438,6 +410,24 @@ func addFileToVault(srcPath, folderPrefix string) error {
 	plainSize := st.Size()
 	if plainSize < 0 {
 		return errors.New("negative file size")
+	}
+
+	detectedMime := mimeForVaultPath(vaultPath)
+	if plainSize > 0 {
+		buf512 := make([]byte, 512)
+		n, err := in.Read(buf512)
+		if err != nil && err != io.EOF {
+			return err
+		}
+		dt := http.DetectContentType(buf512[:n])
+		if dt != "application/octet-stream" && dt != "text/plain; charset=utf-8" {
+			detectedMime = dt
+		} else if detectedMime == "application/octet-stream" {
+			detectedMime = dt
+		}
+		if _, serr := in.Seek(0, 0); serr != nil {
+			return serr
+		}
 	}
 
 	aead, err := newAESGCM(globalVault.chunkKey)
@@ -487,7 +477,7 @@ func addFileToVault(srcPath, folderPrefix string) error {
 	newEnd := uint64(appendOff) + uint64(len(prefix))
 	globalVault.files = append(globalVault.files, vaultFileRecord{
 		Path:      vaultPath,
-		Mime:      mimeForVaultPath(vaultPath),
+		Mime:      detectedMime,
 		PlainSize: plainSize,
 		Offset:    appendOff,
 	})
@@ -663,76 +653,7 @@ func mimeForPath(name string) string {
 	}
 }
 
-func detectMimeFromVaultContent(rec vaultFileRecord) string {
-	if rec.IsDir {
-		return "application/x-directory"
-	}
 
-	// Try to detect from actual file content by reading first chunk
-	globalVault.mu.RLock()
-	defer globalVault.mu.RUnlock()
-
-	if !vaultUnlocked() || globalVault.f == nil {
-		return mimeForVaultPath(rec.Path)
-	}
-
-	// Read first chunk header to get nonce and decrypt first part
-	var hdr [4]byte
-	if _, err := globalVault.f.ReadAt(hdr[:], rec.Offset); err != nil {
-		return mimeForVaultPath(rec.Path)
-	}
-
-	nChunks := binary.BigEndian.Uint32(hdr[:])
-	if nChunks == 0 {
-		return mimeForVaultPath(rec.Path)
-	}
-
-	off := rec.Offset + 4
-
-	// Read first chunk
-	nonce := make([]byte, gcmNonceSize)
-	if _, err := globalVault.f.ReadAt(nonce, off); err != nil {
-		return mimeForVaultPath(rec.Path)
-	}
-	off += gcmNonceSize
-
-	var clenRaw [4]byte
-	if _, err := globalVault.f.ReadAt(clenRaw[:], off); err != nil {
-		return mimeForVaultPath(rec.Path)
-	}
-	off += 4
-
-	clen := int64(binary.BigEndian.Uint32(clenRaw[:]))
-	if clen > 512 { // Limit to first 512 bytes for detection
-		clen = 512
-	}
-
-	ct := make([]byte, clen)
-	if _, err := globalVault.f.ReadAt(ct, off); err != nil {
-		return mimeForVaultPath(rec.Path)
-	}
-
-	// Decrypt first chunk
-	block, err := newAESGCM(globalVault.chunkKey)
-	if err != nil {
-		return mimeForVaultPath(rec.Path)
-	}
-
-	plaintext, err := block.Open(nil, nonce, ct, nil)
-	if err != nil {
-		return mimeForVaultPath(rec.Path)
-	}
-	defer zero(plaintext)
-
-	// Use http.DetectContentType on the decrypted content
-	mimeType := http.DetectContentType(plaintext)
-	if mimeType != "application/octet-stream" {
-		return mimeType
-	}
-
-	// Fallback to extension-based detection
-	return mimeForVaultPath(rec.Path)
-}
 
 func zero(b []byte) {
 	for i := range b {
@@ -751,6 +672,85 @@ func findVaultEntry(path string) (vaultFileRecord, bool) {
 	return vaultFileRecord{}, false
 }
 
+// decryptFileBytes decrypts a vault file fully in memory and returns the plaintext bytes.
+// This is used by the Wails binding so the frontend can access file content without
+// relying on the local HTTP decrypt server URL.
+func decryptFileBytes(path string) ([]byte, string, error) {
+	vp, err := validateVaultPath(path)
+	if err != nil {
+		return nil, "", err
+	}
+
+	globalVault.mu.RLock()
+	if globalVault.f == nil {
+		globalVault.mu.RUnlock()
+		return nil, "", errVaultLocked
+	}
+	var rec *vaultFileRecord
+	for i := range globalVault.files {
+		if globalVault.files[i].Path == vp {
+			rec = &globalVault.files[i]
+			break
+		}
+	}
+	if rec == nil {
+		globalVault.mu.RUnlock()
+		return nil, "", errors.New("path not found")
+	}
+	if rec.IsDir {
+		globalVault.mu.RUnlock()
+		return nil, "", errors.New("not a file")
+	}
+	f := globalVault.f
+	key := append([]byte(nil), globalVault.chunkKey...)
+	mime := rec.Mime
+	if mime == "" {
+		mime = mimeForVaultPath(rec.Path)
+	}
+	plainSize := rec.PlainSize
+	offset := rec.Offset
+	globalVault.mu.RUnlock()
+	defer zero(key)
+
+	block, err := newAESGCM(key)
+	if err != nil {
+		return nil, "", err
+	}
+
+	var hdr [4]byte
+	if _, err := f.ReadAt(hdr[:], offset); err != nil {
+		return nil, "", err
+	}
+	nChunks := binary.BigEndian.Uint32(hdr[:])
+	off := offset + 4
+	out := make([]byte, 0, plainSize)
+
+	for range int(nChunks) {
+		nonce := make([]byte, gcmNonceSize)
+		if _, err := f.ReadAt(nonce, off); err != nil {
+			return nil, "", err
+		}
+		off += gcmNonceSize
+		var clenRaw [4]byte
+		if _, err := f.ReadAt(clenRaw[:], off); err != nil {
+			return nil, "", err
+		}
+		off += 4
+		clen := int64(binary.BigEndian.Uint32(clenRaw[:]))
+		ct := make([]byte, clen)
+		if _, err := f.ReadAt(ct, off); err != nil {
+			return nil, "", err
+		}
+		off += clen
+		pt, err := block.Open(nil, nonce, ct, nil)
+		if err != nil {
+			return nil, "", err
+		}
+		out = append(out, pt...)
+	}
+	return out, mime, nil
+}
+
 func streamDecryptedFile(w http.ResponseWriter, r *http.Request, rec vaultFileRecord) error {
 	if rec.IsDir {
 		return errors.New("cannot decrypt a directory")
@@ -763,6 +763,9 @@ func streamDecryptedFile(w http.ResponseWriter, r *http.Request, rec vaultFileRe
 	}
 
 	// Non-range request - stream entire file
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Content-Length", strconv.FormatInt(rec.PlainSize, 10))
+
 	globalVault.mu.RLock()
 	f := globalVault.f
 	key := append([]byte(nil), globalVault.chunkKey...)
@@ -822,18 +825,33 @@ func streamDecryptedFileRange(w http.ResponseWriter, r *http.Request, rec vaultF
 		return errors.New("invalid range header")
 	}
 
-	start, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil {
-		return errors.New("invalid range start")
-	}
-
+	var start int64
 	var end int64
-	if parts[1] == "" {
+	var err error
+
+	if parts[0] == "" {
+		// Suffix byte range request (e.g. bytes=-500)
+		suffix, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			return errors.New("invalid range suffix")
+		}
+		start = rec.PlainSize - suffix
+		if start < 0 {
+			start = 0
+		}
 		end = rec.PlainSize - 1
 	} else {
-		end, err = strconv.ParseInt(parts[1], 10, 64)
+		start, err = strconv.ParseInt(parts[0], 10, 64)
 		if err != nil {
-			return errors.New("invalid range end")
+			return errors.New("invalid range start")
+		}
+		if parts[1] == "" {
+			end = rec.PlainSize - 1
+		} else {
+			end, err = strconv.ParseInt(parts[1], 10, 64)
+			if err != nil {
+				return errors.New("invalid range end")
+			}
 		}
 	}
 
@@ -849,8 +867,7 @@ func streamDecryptedFileRange(w http.ResponseWriter, r *http.Request, rec vaultF
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.WriteHeader(http.StatusPartialContent)
 
-	// For simplicity, decrypt the whole file and write the requested range
-	// In a production system, you'd want to decrypt only the needed chunks
+	// Only decrypt exactly the needed chunks
 	globalVault.mu.RLock()
 	f := globalVault.f
 	key := append([]byte(nil), globalVault.chunkKey...)
@@ -868,13 +885,10 @@ func streamDecryptedFileRange(w http.ResponseWriter, r *http.Request, rec vaultF
 	nChunks := binary.BigEndian.Uint32(hdr[:])
 	off := rec.Offset + 4
 
-	// Decrypt all chunks and collect data
-	var allData []byte
+	var currentPTInt64 int64 = 0
+
 	for range int(nChunks) {
-		nonce := make([]byte, gcmNonceSize)
-		if _, err := f.ReadAt(nonce, off); err != nil {
-			return err
-		}
+		nonceOff := off
 		off += gcmNonceSize
 		var clenRaw [4]byte
 		if _, err := f.ReadAt(clenRaw[:], off); err != nil {
@@ -882,25 +896,52 @@ func streamDecryptedFileRange(w http.ResponseWriter, r *http.Request, rec vaultF
 		}
 		off += 4
 		clen := int64(binary.BigEndian.Uint32(clenRaw[:]))
+		ptLen := clen - gcmTagSize
+
+		chunkStart := currentPTInt64
+		chunkEnd := currentPTInt64 + ptLen - 1
+
+		if chunkEnd < start || chunkStart > end {
+			off += clen
+			currentPTInt64 += ptLen
+			continue
+		}
+
+		nonce := make([]byte, gcmNonceSize)
+		if _, err := f.ReadAt(nonce, nonceOff); err != nil {
+			return err
+		}
+
 		ct := make([]byte, clen)
 		if _, err := f.ReadAt(ct, off); err != nil {
 			return err
 		}
 		off += clen
+		
 		pt, err := block.Open(nil, nonce, ct, nil)
 		if err != nil {
 			return err
 		}
-		allData = append(allData, pt...)
+
+		writeStart := start - chunkStart
+		if writeStart < 0 {
+			writeStart = 0
+		}
+		writeEnd := end - chunkStart
+		if writeEnd >= int64(len(pt)) {
+			writeEnd = int64(len(pt)) - 1
+		}
+
+		if writeStart <= writeEnd {
+			if _, err := w.Write(pt[writeStart : writeEnd+1]); err != nil {
+				return err
+			}
+		}
+
+		currentPTInt64 += ptLen
 	}
 
-	// Write only the requested range
-	if start < int64(len(allData)) && end < int64(len(allData)) {
-		_, err = w.Write(allData[start : end+1])
-		return err
-	}
-
-	return errors.New("range out of bounds")
+	return nil
 }
 
 // contentDispositionInline sets a suggested filename for Save dialogs while keeping inline display
@@ -922,20 +963,7 @@ func contentDispositionInline(vaultPath string) string {
 	return fmt.Sprintf(`inline; filename="%s"; filename*=UTF-8''%s`, fallback, url.PathEscape(base))
 }
 
-func remoteAddrIsLoopback(r *http.Request) bool {
-	addr := r.RemoteAddr
-	if addr == "" {
-		return false
-	}
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		host = addr
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
-
-func decryptHandler(w http.ResponseWriter, r *http.Request) {
+func DecryptHandler(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	if token == "" {
 		http.Error(w, "missing token", http.StatusBadRequest)
@@ -966,42 +994,29 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Detect MIME type dynamically from actual file content
-	detectedMime := detectMimeFromVaultContent(rec)
+	detectedMime := rec.Mime
+	if detectedMime == "" {
+		detectedMime = mimeForVaultPath(rec.Path)
+	}
 	w.Header().Set("Content-Type", detectedMime)
 	w.Header().Set("Content-Disposition", contentDispositionInline(rec.Path))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if err := streamDecryptedFile(w, r, rec); err != nil {
-		http.Error(w, "decrypt error", http.StatusInternalServerError)
-	}
-}
 
-func startDecryptServer() error {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/decrypt", func(w http.ResponseWriter, r *http.Request) {
-		if !remoteAddrIsLoopback(r) {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Expose-Headers", "Content-Disposition")
-		if r.Method == http.MethodOptions {
-			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Range, Content-Type")
-			return
-		}
-		decryptHandler(w, r)
-	})
-	// Loopback only: not reachable from the LAN; RemoteAddr is also checked per request.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return err
+	if r.Method == http.MethodHead {
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.Header().Set("Content-Length", strconv.FormatInt(rec.PlainSize, 10))
+		w.WriteHeader(http.StatusOK)
+		return
 	}
-	srv := &http.Server{Handler: mux}
-	globalVault.srv = srv
-	go func() {
-		_ = srv.Serve(ln)
-	}()
-	globalVault.mediaBase = "http://" + ln.Addr().String()
-	return nil
+
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Expose-Headers", "Content-Disposition")
+
+	if err := streamDecryptedFile(w, r, rec); err != nil {
+		fmt.Printf("ERROR streaming file %s: %v\n", rec.Path, err)
+		// Do not use http.Error here, because headers (like 206 Partial Content) 
+		// and video bytes have already been sent over the wire.
+		// Writing an error now will corrupt the HTTP Keep-Alive connection
+		// and cause the browser's video player to permanently fail for this vault session.
+	}
 }
