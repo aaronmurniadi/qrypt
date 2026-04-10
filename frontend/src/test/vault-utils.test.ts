@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatErr, isTextLike, isImage, isVideo, basename, parentVaultPath, listChildRows, ChildRow } from "../lib/vault-utils";
+import { formatErr, isTextLike, isImage, isVideo, basename, parentVaultPath, listChildRows, ChildRow, ALGORITHM_OPTIONS } from "../lib/vault-utils";
 import { backend } from "../../wailsjs/go/models";
 
 describe("vault-utils", () => {
@@ -28,6 +28,26 @@ describe("vault-utils", () => {
     it("isVideo", () => {
       expect(isVideo("video/mp4")).toBe(true);
       expect(isVideo("image/png")).toBe(false);
+    });
+  });
+
+  describe("algorithm options", () => {
+    it("has all required algorithms", () => {
+      const algos = ALGORITHM_OPTIONS.map(a => a.value);
+      expect(algos).toContain("aes");
+      expect(algos).toContain("serpent");
+      expect(algos).toContain("twofish");
+    });
+
+    it("has correct display names", () => {
+      const aes = ALGORITHM_OPTIONS.find(a => a.value === "aes");
+      expect(aes?.label).toContain("AES");
+
+      const serpent = ALGORITHM_OPTIONS.find(a => a.value === "serpent");
+      expect(serpent?.label).toContain("Serpent");
+
+      const twofish = ALGORITHM_OPTIONS.find(a => a.value === "twofish");
+      expect(twofish?.label).toContain("Twofish");
     });
   });
 

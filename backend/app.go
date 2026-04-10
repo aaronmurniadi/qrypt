@@ -44,15 +44,18 @@ func (a *App) PickNewVaultPath() (string, error) {
 	})
 }
 
-func (a *App) FinalizeNewVault(path, password string) error {
-	log.Info().Str("path", path).Msg("Creating new vault")
+func (a *App) FinalizeNewVault(path, password, algorithm string) error {
+	log.Info().Str("path", path).Str("algorithm", algorithm).Msg("Creating new vault")
 	if path == "" {
 		return errors.New("no path selected")
 	}
 	if password == "" {
 		return errors.New("password required")
 	}
-	err := createVault(path, password, "aes")
+	if algorithm == "" {
+		algorithm = "aes"
+	}
+	err := createVault(path, password, algorithm)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to create vault")
 	} else {

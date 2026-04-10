@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { AddFileDialog } from "@/components/vault/dialogs/AddFileDialog";
+import { CreateVaultDialog } from "@/components/vault/dialogs/CreateVaultDialog";
 import {
   FilePlus,
   Folder,
@@ -178,6 +179,7 @@ export default function App() {
   const [openPwdOpen, setOpenPwdOpen] = useState(false);
   const [pendingPath, setPendingPath] = useState("");
   const [password, setPassword] = useState("");
+  const [algorithm, setAlgorithm] = useState("aes");
   const [createVaultSubmitting, setCreateVaultSubmitting] = useState(false);
 
   const [isMediaLoading, setIsMediaLoading] = useState(false);
@@ -444,15 +446,16 @@ export default function App() {
 
   async function submitCreateVault() {
     if (createVaultSubmitting) return;
-    logger.info(`Finalizing new vault creation: ${pendingPath}`);
+    logger.info(`Finalizing new vault creation: ${pendingPath} with ${algorithm}`);
     setBanner(null);
     setCreateVaultSubmitting(true);
     try {
-      await Backend.FinalizeNewVault(pendingPath, password);
+      await Backend.FinalizeNewVault(pendingPath, password, algorithm);
       logger.info("Vault created successfully");
       setCreatePwdOpen(false);
       setPassword("");
       setPendingPath("");
+      setAlgorithm("aes");
       setFolderPrefix("");
       await refresh();
     } catch (e) {
@@ -915,68 +918,24 @@ export default function App() {
         </main>
       </div>
 
-      <Dialog
+      <CreateVaultDialog
         open={createPwdOpen}
         onOpenChange={(open: boolean) => {
           if (!open && createVaultSubmitting) return;
           setCreatePwdOpen(open);
-          if (!open) setCreateVaultSubmitting(false);
+          if (!open) {
+            setCreateVaultSubmitting(false);
+            setAlgorithm("aes");
+          }
         }}
-      >
-        <DialogContent
-          showClose={!createVaultSubmitting}
-          onPointerDownOutside={(ev: { preventDefault: () => void }) => {
-            if (createVaultSubmitting) ev.preventDefault();
-          }}
-          onEscapeKeyDown={(ev) => {
-            if (createVaultSubmitting) ev.preventDefault();
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>New vault password</DialogTitle>
-            <DialogDescription>
-              Argon2id derives a key for your vault. Choose a strong password. Path:{" "}
-              <span className="font-mono text-xs break-all">{pendingPath}</span>
-            </DialogDescription>
-          </DialogHeader>
-          <Input
-            type="password"
-            autoComplete="new-password"
-            placeholder="Password"
-            value={password}
-            disabled={createVaultSubmitting}
-            onChange={(ev) => setPassword(ev.target.value)}
-            onKeyDown={(ev) => {
-              if (ev.key === "Enter" && !createVaultSubmitting) void submitCreateVault();
-            }}
-          />
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={createVaultSubmitting}
-              onClick={() => setCreatePwdOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              disabled={createVaultSubmitting}
-              aria-busy={createVaultSubmitting}
-              onClick={() => void submitCreateVault()}
-            >
-              {createVaultSubmitting ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" aria-hidden />
-                  Creating…
-                </>
-              ) : (
-                "Create vault"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        pendingPath={pendingPath}
+        password={password}
+        onPasswordChange={setPassword}
+        algorithm={algorithm}
+        onAlgorithmChange={setAlgorithm}
+        submitting={createVaultSubmitting}
+        onSubmit={submitCreateVault}
+      />
 
       <Dialog
         open={deleteOpen}

@@ -4,7 +4,7 @@
 
 ![QrypT Screenshot](images/screenshot.png)
 
-**Version**: 0.2.1
+**Version**: 0.3.0
 
 [![Wails](https://img.shields.io/badge/Wails-v2.11.0-blue)](https://wails.io/)
 [![Go](https://img.shields.io/badge/Go-1.24+-00ADD8)](https://golang.org/)
@@ -41,6 +41,16 @@ The author and contributors of QrypT accept no liability for any data loss, secu
 
 
 ## 📋 Release Notes
+
+### [0.3.0] - 2026-04-10
+
+#### Added
+- **Twofish-256 XTS**: New encryption algorithm option for advanced security
+- **Algorithm Selection**: Users can now choose between AES-256 GCM, Serpent-256 XTS, and Twofish-256 XTS when creating new vaults
+
+#### Changed
+- **Backend**: Updated `FinalizeNewVault` to accept algorithm parameter
+- **Frontend**: Refactored create vault dialog into separate component with algorithm selector
 
 ### [0.2.1] - 2026-04-10
 

@@ -21,18 +21,20 @@ import (
 
 	"github.com/aead/serpent"
 	"golang.org/x/crypto/argon2"
+	"golang.org/x/crypto/twofish"
 	"golang.org/x/crypto/xts"
 )
 
 const (
-	vaultMagic         = "QRYPTV01"
-	formatV1AES        = uint32(3)
-	formatV1SerpentXTS = uint32(4)
-	headerSize         = 4096
-	headerMetaOffV3    = 56
-	gcmNonceSize       = 12
-	gcmTagSize         = 16
-	fileChunkPlain     = 256 * 1024
+	vaultMagic          = "QRYPTV01"
+	formatV1AES         = uint32(3)
+	formatV1SerpentXTS  = uint32(4)
+	formatV1TwofishXTS  = uint32(5)
+	headerSize          = 4096
+	headerMetaOffV3     = 56
+	gcmNonceSize        = 12
+	gcmTagSize          = 16
+	fileChunkPlain      = 256 * 1024
 )
 
 var errVaultLocked = errors.New("vault is locked")
@@ -85,7 +87,7 @@ func parseHeader(buf []byte) (vaultHeader, error) {
 		return h, errors.New("invalid vault magic")
 	}
 	ver := binary.LittleEndian.Uint32(buf[8:12])
-	if ver != formatV1AES && ver != formatV1SerpentXTS {
+	if ver != formatV1AES && ver != formatV1SerpentXTS && ver != formatV1TwofishXTS {
 		return h, fmt.Errorf("unsupported vault format %d (create a new vault with this app version)", ver)
 	}
 	h.Format = ver
@@ -133,6 +135,16 @@ func newSerpentXTS(key []byte) (*xts.Cipher, error) {
 	}
 	cipherFunc := func(k []byte) (cipher.Block, error) {
 		return serpent.NewCipher(k)
+	}
+	return xts.NewCipher(cipherFunc, key)
+}
+
+func newTwofishXTS(key []byte) (*xts.Cipher, error) {
+	if len(key) != 64 {
+		return nil, errors.New("Twofish-XTS requires 512-bit key (64 bytes)")
+	}
+	cipherFunc := func(k []byte) (cipher.Block, error) {
+		return twofish.NewCipher(k)
 	}
 	return xts.NewCipher(cipherFunc, key)
 }
@@ -192,6 +204,16 @@ func encryptCatalog(key, plain []byte, format uint32) ([]byte, error) {
 		c.Encrypt(out, padded, 0)
 		return out, nil
 	}
+	if format == formatV1TwofishXTS {
+		c, err := newTwofishXTS(key)
+		if err != nil {
+			return nil, err
+		}
+		padded := pkcs7Pad(plain, 16)
+		out := make([]byte, len(padded))
+		c.Encrypt(out, padded, 0)
+		return out, nil
+	}
 
 	nonce := make([]byte, gcmNonceSize)
 	if _, err := rand.Read(nonce); err != nil {
@@ -210,6 +232,18 @@ func decryptCatalog(key, blob []byte, format uint32) ([]byte, error) {
 			return nil, errors.New("invalid Serpent-XTS catalog length")
 		}
 		c, err := newSerpentXTS(key)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]byte, len(blob))
+		c.Decrypt(out, blob, 0)
+		return pkcs7Unpad(out)
+	}
+	if format == formatV1TwofishXTS {
+		if len(blob)%16 != 0 {
+			return nil, errors.New("invalid Twofish-XTS catalog length")
+		}
+		c, err := newTwofishXTS(key)
 		if err != nil {
 			return nil, err
 		}
@@ -270,7 +304,7 @@ func openVaultWithPassword(path, password string) error {
 		return err
 	}
 	keyLen := uint32(32)
-	if h.Format == formatV1SerpentXTS {
+	if h.Format == formatV1SerpentXTS || h.Format == formatV1TwofishXTS {
 		keyLen = 64
 	}
 	pwdK := deriveKey(password, h.Salt[:], h.ArgonTime, h.ArgonMemoryKiB, h.ArgonThreads, keyLen)
@@ -317,6 +351,10 @@ func createVault(path, password, algorithm string) error {
 	keyLen := uint32(32)
 	if strings.ToLower(algorithm) == "serpent" {
 		format = formatV1SerpentXTS
+		keyLen = 64
+	}
+	if strings.ToLower(algorithm) == "twofish" {
+		format = formatV1TwofishXTS
 		keyLen = 64
 	}
 
@@ -520,6 +558,12 @@ func addFileToVault(srcPath, folderPrefix string) error {
 	if globalVault.header.Format == formatV1SerpentXTS {
 		var serr error
 		xc, serr = newSerpentXTS(globalVault.chunkKey)
+		if serr != nil {
+			return serr
+		}
+	} else if globalVault.header.Format == formatV1TwofishXTS {
+		var serr error
+		xc, serr = newTwofishXTS(globalVault.chunkKey)
 		if serr != nil {
 			return serr
 		}
@@ -822,6 +866,8 @@ func decryptFileBytes(path string) ([]byte, string, error) {
 	var xc *xts.Cipher
 	if globalVault.header.Format == formatV1SerpentXTS {
 		xc, err = newSerpentXTS(key)
+	} else if globalVault.header.Format == formatV1TwofishXTS {
+		xc, err = newTwofishXTS(key)
 	} else {
 		block, err = newAESGCM(key)
 	}
@@ -901,6 +947,8 @@ func streamDecryptedFile(w http.ResponseWriter, r *http.Request, rec vaultFileRe
 	var err error
 	if format == formatV1SerpentXTS {
 		xc, err = newSerpentXTS(key)
+	} else if format == formatV1TwofishXTS {
+		xc, err = newTwofishXTS(key)
 	} else {
 		block, err = newAESGCM(key)
 	}
@@ -1024,6 +1072,8 @@ func streamDecryptedFileRange(w http.ResponseWriter, r *http.Request, rec vaultF
 	var xc *xts.Cipher
 	if format == formatV1SerpentXTS {
 		xc, err = newSerpentXTS(key)
+	} else if format == formatV1TwofishXTS {
+		xc, err = newTwofishXTS(key)
 	} else {
 		block, err = newAESGCM(key)
 	}

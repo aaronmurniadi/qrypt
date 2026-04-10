@@ -80,6 +80,7 @@ export function CreateVaultDialog({
           >
             <option value="aes">AES-256 GCM (Standard)</option>
             <option value="serpent">Serpent-256 XTS (Advanced)</option>
+            <option value="twofish">Twofish-256 XTS (Advanced)</option>
           </select>
         </div>
         <DialogFooter>

@@ -83,3 +83,9 @@ export function listChildRows(folderPrefix: string, entries: backend.VaultFileEn
   }
   return rows;
 }
+
+export const ALGORITHM_OPTIONS = [
+  { value: "aes", label: "AES-256 GCM (Standard)" },
+  { value: "serpent", label: "Serpent-256 XTS (Advanced)" },
+  { value: "twofish", label: "Twofish-256 XTS (Advanced)" },
+] as const;

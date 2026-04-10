@@ -26,8 +26,8 @@ export function DeleteVaultPath(arg1) {
   return window['go']['backend']['App']['DeleteVaultPath'](arg1);
 }
 
-export function FinalizeNewVault(arg1, arg2) {
-  return window['go']['backend']['App']['FinalizeNewVault'](arg1, arg2);
+export function FinalizeNewVault(arg1, arg2, arg3) {
+  return window['go']['backend']['App']['FinalizeNewVault'](arg1, arg2, arg3);
 }
 
 export function GetDecryptedFileBase64(arg1) {
