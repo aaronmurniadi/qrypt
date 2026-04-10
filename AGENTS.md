@@ -2,6 +2,9 @@
 
 This repository is a Wails application (Go backend + React/Vite frontend).
 
+### Token Optimization
+* Conciseness: Prioritize extreme brevity. Use the minimum number of tokens necessary to convey accurate information.
+
 ## Agent CLI & Commands
 - **Always prefix shell commands with `rtk`** (e.g., `rtk ls -la`, `rtk grep "pattern"`).
 - Do this with ALL shell commands.

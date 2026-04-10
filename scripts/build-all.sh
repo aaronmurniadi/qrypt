@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build script for all platforms
+# Build script for Windows and macOS (Linux excluded - requires GTK dependencies)
 
 VERSION=${1:-"1.0.0"}
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -11,10 +11,6 @@ echo "================================"
 # Build for Windows AMD64
 echo "Building for Windows (amd64)..."
 wails build -platform windows/amd64 -clean -ldflags "-X main.version=$VERSION -X main.commit=$COMMIT -X main.date=$DATE"
-
-# Build for Linux AMD64
-echo "Building for Linux (amd64)..."
-wails build -platform linux/amd64 -clean -ldflags "-X main.version=$VERSION -X main.commit=$COMMIT -X main.date=$DATE"
 
 # Build for macOS ARM64 (Apple Silicon)
 echo "Building for macOS (arm64)..."
