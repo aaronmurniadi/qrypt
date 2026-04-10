@@ -43,13 +43,22 @@ The author and contributors of QrypT accept no liability for any data loss, secu
 ## 📋 Release Notes
 
 ### [0.2.0] - 2026-04-10
-- **In-memory file decryption**: Files are now decrypted entirely in memory via Wails IPC, eliminating the local HTTP server for file previews
-- **Image preview support**: Added ability to preview images directly in the vault
-- **One-time download links**: Added "Copy link" functionality for generating secure download links
-- **Enhanced UI/UX**: Refined vault sidebar, file selection UI, and improved loading states/transitions
-- **Comprehensive logging**: Implemented logging system for both backend (zerolog) and frontend
-- **Updated branding**: New app icon and refreshed visual design
-- **GitHub Actions workflow**: Added automated release workflow for cross-platform builds
+
+#### Changed
+- **Security & Privacy**: Transitioned to in-memory file decryption via Wails IPC, removing the reliance on a local HTTP server for file previews
+- **UI/UX**: Refined the vault sidebar, file selection UI, and enhanced loading states/transitions for media previews
+- **Branding**: Updated app icon and branding throughout the application
+
+#### Added
+- **Features**:
+  - Added "Copy link" functionality to generate one-time download links for files
+  - Added image preview support in the vault
+- **Logging**: Implemented comprehensive logging system for both backend (using `zerolog`) and frontend
+- **Documentation**: Updated README with screenshots and detailed feature descriptions
+- **GitHub Actions**: Added automated release workflow for cross-platform builds
+
+#### Removed
+- Removed legacy embedded assets (`embed/qrypt.png`)
 
 ## 🤝 Contributing
 

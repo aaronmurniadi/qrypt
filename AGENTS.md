@@ -4,7 +4,7 @@ This repository is a Wails application (Go backend + React/Vite frontend).
 
 ## Agent CLI & Commands
 - **Always prefix shell commands with `rtk`** (e.g., `rtk ls -la`, `rtk grep "pattern"`).
-- Do this with ALL commands
+- Do this with ALL shell commands.
 - If `rtk` is not found, install it using: `curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/master/install.sh | sh`
 
 ## Architecture & Boundaries
