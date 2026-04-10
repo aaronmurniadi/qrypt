@@ -4,7 +4,7 @@
 
 ![QrypT Screenshot](images/screenshot.png)
 
-**Version**: 0.2.0
+**Version**: 0.2.1
 
 [![Wails](https://img.shields.io/badge/Wails-v2.11.0-blue)](https://wails.io/)
 [![Go](https://img.shields.io/badge/Go-1.24+-00ADD8)](https://golang.org/)
@@ -41,6 +41,12 @@ The author and contributors of QrypT accept no liability for any data loss, secu
 
 
 ## 📋 Release Notes
+
+### [0.2.1] - 2026-04-10
+
+#### Added
+- **Add File Dialog**: New modal dialog for adding files with drag-and-drop area and system file picker
+- **URL Download**: Download files directly from URLs and save them to the vault
 
 ### [0.2.0] - 2026-04-10
 

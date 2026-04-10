@@ -13,6 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { AddFileDialog } from "@/components/vault/dialogs/AddFileDialog";
 import {
   FilePlus,
   Folder,
@@ -183,6 +184,7 @@ export default function App() {
 
   const [folderPrefix, setFolderPrefix] = useState("");
   const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [addFileOpen, setAddFileOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [renameOpen, setRenameOpen] = useState(false);
@@ -641,7 +643,7 @@ export default function App() {
         </Button>
         {unlocked ? (
           <>
-            <Button type="button" size="sm" onClick={() => void onAddFile()} className="non-draggable">
+            <Button type="button" size="sm" onClick={() => setAddFileOpen(true)} className="non-draggable">
               <FilePlus className="size-4" aria-hidden />
               Add file here
             </Button>
@@ -1080,6 +1082,27 @@ export default function App() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AddFileDialog
+        open={addFileOpen}
+        onOpenChange={setAddFileOpen}
+        folderPrefix={folderPrefix}
+        onSelectFile={() => void onAddFile()}
+        onDownloadUrl={async (url: string) => {
+          logger.info(`Downloading file from URL: ${url}`);
+          setBanner(null);
+          try {
+            await Backend.AddFileFromUrlToVault(url, folderPrefix);
+            logger.info("File downloaded and added to vault");
+            await refresh();
+          } catch (e) {
+            const msg = formatErr(e);
+            logger.error(`Failed to download file: ${msg}`);
+            setBanner(msg);
+            throw e;
+          }
+        }}
+      />
 
       <Dialog open={openPwdOpen} onOpenChange={setOpenPwdOpen}>
         <DialogContent showClose>

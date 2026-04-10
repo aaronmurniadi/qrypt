@@ -33,3 +33,6 @@ This repository is a Wails application (Go backend + React/Vite frontend).
 
 ## Git Workflow
 - Never push to remote yourself, ask user to do it!
+- Review current changes and generate a commit message
+- Commit changes
+- Always make sure current version in main.go is the same as the changelog in README.md

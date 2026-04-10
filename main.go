@@ -19,7 +19,7 @@ var assets embed.FS
 
 var (
 	// Build-time variables
-	version = "1.1.0"
+	version = "0.2.1"
 	commit  = "none"
 	date    = "unknown"
 )

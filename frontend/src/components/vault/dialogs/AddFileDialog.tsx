@@ -7,15 +7,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Download, FilePlus } from "lucide-react";
 import { useState } from "react";
-import { UploadCloud, Link as LinkIcon, FilePlus } from "lucide-react";
 
 type AddFileDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   folderPrefix: string;
   onSelectFile: () => void;
-  onAddUrl: (url: string) => Promise<void>;
+  onDownloadUrl: (url: string) => Promise<void>;
 };
 
 export function AddFileDialog({
@@ -23,25 +23,46 @@ export function AddFileDialog({
   onOpenChange,
   folderPrefix,
   onSelectFile,
-  onAddUrl,
+  onDownloadUrl,
 }: AddFileDialogProps) {
   const [url, setUrl] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState("");
 
-  async function handleAddUrl() {
-    if (!url.trim()) return;
-    setLoading(true);
+  function handleSelectFile() {
+    onOpenChange(false);
+    onSelectFile();
+  }
+
+  async function handleDownload() {
+    const trimmedUrl = url.trim();
+    if (!trimmedUrl) return;
+
+    setDownloading(true);
+    setError("");
+
     try {
-      await onAddUrl(url.trim());
+      await onDownloadUrl(trimmedUrl);
       setUrl("");
       onOpenChange(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      setDownloading(false);
     }
   }
 
+  function handleOpenChange(open: boolean) {
+    if (!open) {
+      setUrl("");
+      setError("");
+      setDownloading(false);
+    }
+    onOpenChange(open);
+  }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent showClose>
         <DialogHeader>
           <DialogTitle>Add file to vault</DialogTitle>
@@ -50,21 +71,32 @@ export function AddFileDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-6 py-4">
-          <div className="flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-lg border-muted-foreground/25 bg-muted/10 text-center">
-            <UploadCloud className="size-10 text-muted-foreground mb-4" />
-            <h3 className="font-medium mb-1">Drag and drop files here</h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              Or use the file picker to select a file from your computer
-            </p>
-            <Button onClick={() => {
-              onOpenChange(false);
-              onSelectFile();
-            }}>
-              <FilePlus className="size-4 mr-2" />
-              Select File
+        <div className="flex flex-col gap-4 py-4">
+          <div className="flex gap-2">
+            <Input
+              placeholder="https://example.com/file.png"
+              value={url}
+              onChange={(e) => {
+                setUrl(e.target.value);
+                setError("");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void handleDownload();
+              }}
+              disabled={downloading}
+            />
+            <Button
+              onClick={() => void handleDownload()}
+              disabled={downloading || !url.trim()}
+            >
+              <Download className="size-4 mr-2" />
+              {downloading ? "Downloading..." : "Download"}
             </Button>
           </div>
+
+          {error && (
+            <p className="text-sm text-destructive">{error}</p>
+          )}
 
           <div className="flex items-center gap-4">
             <div className="flex-1 h-px bg-border"></div>
@@ -72,24 +104,10 @@ export function AddFileDialog({
             <div className="flex-1 h-px bg-border"></div>
           </div>
 
-          <div className="flex flex-col gap-3">
-            <h3 className="font-medium text-sm">Add from URL</h3>
-            <div className="flex gap-2">
-              <Input
-                placeholder="https://example.com/image.png"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void handleAddUrl();
-                }}
-                disabled={loading}
-              />
-              <Button onClick={() => void handleAddUrl()} disabled={loading || !url.trim()}>
-                <LinkIcon className="size-4 mr-2" />
-                {loading ? "Adding..." : "Add URL"}
-              </Button>
-            </div>
-          </div>
+          <Button variant="outline" onClick={handleSelectFile} className="w-full">
+            <FilePlus className="size-4 mr-2" />
+            Select Files
+          </Button>
         </div>
       </DialogContent>
     </Dialog>
