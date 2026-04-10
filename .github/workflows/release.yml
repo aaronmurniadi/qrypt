@@ -50,7 +50,7 @@ jobs:
       - name: Build Linux
         run: |
           wails build -platform linux/amd64 -clean \
-            -ldflags "-X main.version=${{ steps.meta.outputs.version }} -X main.commit=${{ steps.meta.outputs.commit }} -X main.date=${{ steps.meta.outputs.date }}"
+            -ldflags "-X main.version=${{ steps.meta.outputs.version }} -X main.commit=${{ steps.meta.outputs.commit }} -X main.date=${{ steps.meta.outputs.date }}" -tags webkit2_41
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
@@ -102,7 +102,7 @@ jobs:
           CGO_ENABLED: "1"
         run: |
           wails build -platform windows/amd64 -clean \
-            -ldflags "-X main.version=${{ steps.meta.outputs.version }} -X main.commit=${{ steps.meta.outputs.commit }} -X main.date=${{ steps.meta.outputs.date }}"
+            -ldflags "-X main.version=${{ steps.meta.outputs.version }} -X main.commit=${{ steps.meta.outputs.commit }} -X main.date=${{ steps.meta.outputs.date }}" -tags webkit2_41
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
@@ -143,7 +143,7 @@ jobs:
       - name: Build macOS
         run: |
           wails build -platform darwin/universal -clean \
-            -ldflags "-X main.version=${{ steps.meta.outputs.version }} -X main.commit=${{ steps.meta.outputs.commit }} -X main.date=${{ steps.meta.outputs.date }}"
+            -ldflags "-X main.version=${{ steps.meta.outputs.version }} -X main.commit=${{ steps.meta.outputs.commit }} -X main.date=${{ steps.meta.outputs.date }}" -tags webkit2_41
 
       - name: Zip macOS app
         run: |
