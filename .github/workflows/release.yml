@@ -1,46 +1,87 @@
-name: Wails build
+name: Release Build
 
 on:
   push:
     tags:
-    # Match any new tag
-      - '*'
+      - 'v*'
     branches:
       - main
 
 env:
-  # Necessary for most environments as build failure can occur due to OOM issues
   NODE_OPTIONS: "--max-old-space-size=4096"
 
 jobs:
-  build:
-    strategy:
-    # Failure in one platform build won't impact the others
-      fail-fast: false
-      matrix:
-        build:
-          - name: 'App'
-            platform:  'linux/amd64'
-            os: 'ubuntu-latest'
-          - name: 'App'
-            platform:  'windows/amd64'
-            os: 'windows-latest'
-          - name: 'App'
-            platform:  'darwin/universal'
-            os: 'macos-latest'
-
-    runs-on: ${{ matrix.build.os }}
+  build-linux-windows:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Build wails
-        uses: snider/build@v3
-        id: build
+      - name: Setup Go
+        uses: actions/setup-go@v5
         with:
-          build-name: ${{ matrix.build.name }}
-          build-platform: ${{ matrix.build.platform }}
-          package: false
           go-version: '1.24'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Linux
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          COMMIT=${GITHUB_SHA:0:8}
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          wails build -platform linux/amd64 -clean -ldflags "-X main.version=$VERSION -X main.commit=$COMMIT -X main.date=$DATE"
+
+      - name: Build Windows
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          COMMIT=${GITHUB_SHA:0:8}
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          wails build -platform windows/amd64 -clean -ldflags "-X main.version=$VERSION -X main.commit=$COMMIT -X main.date=$DATE"
+
+      - name: Create Release & Upload Linux/Windows
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/bin/qrypt
+            build/bin/qrypt.exe
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build macOS
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          COMMIT=${GITHUB_SHA:0:8}
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          wails build -platform darwin/universal -clean -ldflags "-X main.version=$VERSION -X main.commit=$COMMIT -X main.date=$DATE"
+
+      - name: Upload macOS
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/bin/qrypt.app
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
