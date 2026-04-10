@@ -27,3 +27,6 @@ This repository is a Wails application (Go backend + React/Vite frontend).
 ## Quirks & Notes
 - Wails generates frontend bindings for Go methods in `frontend/wailsjs/`. Do not edit these generated files manually.
 - The app uses in-memory decryption; be mindful of memory usage and avoid temporary disk writes when handling files in the backend.
+
+## Git Workflow
+- Never push to remote yourself, ask user to do it!
