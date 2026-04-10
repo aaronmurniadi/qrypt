@@ -19,17 +19,20 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/aead/serpent"
 	"golang.org/x/crypto/argon2"
+	"golang.org/x/crypto/xts"
 )
 
 const (
-	vaultMagic      = "QRYPTV01"
-	formatV1AES     = uint32(3)
-	headerSize      = 4096
-	headerMetaOffV3 = 56
-	gcmNonceSize    = 12
-	gcmTagSize      = 16
-	fileChunkPlain  = 256 * 1024
+	vaultMagic         = "QRYPTV01"
+	formatV1AES        = uint32(3)
+	formatV1SerpentXTS = uint32(4)
+	headerSize         = 4096
+	headerMetaOffV3    = 56
+	gcmNonceSize       = 12
+	gcmTagSize         = 16
+	fileChunkPlain     = 256 * 1024
 )
 
 var errVaultLocked = errors.New("vault is locked")
@@ -82,7 +85,7 @@ func parseHeader(buf []byte) (vaultHeader, error) {
 		return h, errors.New("invalid vault magic")
 	}
 	ver := binary.LittleEndian.Uint32(buf[8:12])
-	if ver != formatV1AES {
+	if ver != formatV1AES && ver != formatV1SerpentXTS {
 		return h, fmt.Errorf("unsupported vault format %d (create a new vault with this app version)", ver)
 	}
 	h.Format = ver
@@ -112,8 +115,8 @@ func (h *vaultHeader) marshal() []byte {
 }
 
 // deriveKey runs Argon2id; memoryKiB is passed to argon2.IDKey in KiB (per golang.org/x/crypto/argon2).
-func deriveKey(password string, salt []byte, time, memoryKiB, threads uint32) []byte {
-	return argon2.IDKey([]byte(password), salt, time, memoryKiB, uint8(threads), 32)
+func deriveKey(password string, salt []byte, time, memoryKiB, threads, keyLen uint32) []byte {
+	return argon2.IDKey([]byte(password), salt, time, memoryKiB, uint8(threads), keyLen)
 }
 
 func newAESGCM(key []byte) (cipher.AEAD, error) {
@@ -122,6 +125,41 @@ func newAESGCM(key []byte) (cipher.AEAD, error) {
 		return nil, err
 	}
 	return cipher.NewGCM(b)
+}
+
+func newSerpentXTS(key []byte) (*xts.Cipher, error) {
+	if len(key) != 64 {
+		return nil, errors.New("Serpent-XTS requires 512-bit key (64 bytes)")
+	}
+	cipherFunc := func(k []byte) (cipher.Block, error) {
+		return serpent.NewCipher(k)
+	}
+	return xts.NewCipher(cipherFunc, key)
+}
+
+func pkcs7Pad(val []byte, blockSize int) []byte {
+	padLen := blockSize - (len(val) % blockSize)
+	padText := make([]byte, padLen)
+	for i := range padText {
+		padText[i] = byte(padLen)
+	}
+	return append(val, padText...)
+}
+
+func pkcs7Unpad(val []byte) ([]byte, error) {
+	if len(val) == 0 {
+		return nil, errors.New("empty padding")
+	}
+	padLen := int(val[len(val)-1])
+	if padLen <= 0 || padLen > len(val) {
+		return nil, errors.New("invalid padding")
+	}
+	for i := len(val) - padLen; i < len(val); i++ {
+		if val[i] != byte(padLen) {
+			return nil, errors.New("invalid padding")
+		}
+	}
+	return val[:len(val)-padLen], nil
 }
 
 func aesGCMOpen(key, nonce, ciphertext []byte) ([]byte, error) {
@@ -143,7 +181,18 @@ func aesGCMSeal(key, nonce, plaintext []byte) ([]byte, error) {
 	return g.Seal(nil, nonce, plaintext, nil), nil
 }
 
-func encryptCatalog(key, plain []byte) ([]byte, error) {
+func encryptCatalog(key, plain []byte, format uint32) ([]byte, error) {
+	if format == formatV1SerpentXTS {
+		c, err := newSerpentXTS(key)
+		if err != nil {
+			return nil, err
+		}
+		padded := pkcs7Pad(plain, 16)
+		out := make([]byte, len(padded))
+		c.Encrypt(out, padded, 0)
+		return out, nil
+	}
+
 	nonce := make([]byte, gcmNonceSize)
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, err
@@ -155,7 +204,20 @@ func encryptCatalog(key, plain []byte) ([]byte, error) {
 	return append(nonce, ct...), nil
 }
 
-func decryptCatalog(key, blob []byte) ([]byte, error) {
+func decryptCatalog(key, blob []byte, format uint32) ([]byte, error) {
+	if format == formatV1SerpentXTS {
+		if len(blob)%16 != 0 {
+			return nil, errors.New("invalid Serpent-XTS catalog length")
+		}
+		c, err := newSerpentXTS(key)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]byte, len(blob))
+		c.Decrypt(out, blob, 0)
+		return pkcs7Unpad(out)
+	}
+
 	if len(blob) < gcmNonceSize+gcmTagSize {
 		return nil, errors.New("short catalog blob")
 	}
@@ -171,6 +233,17 @@ func sealFileChunk(aead cipher.AEAD, plain []byte) ([]byte, error) {
 	ct := aead.Seal(nil, nonce, plain, nil)
 	out := make([]byte, gcmNonceSize+4+len(ct))
 	copy(out[:gcmNonceSize], nonce)
+	binary.BigEndian.PutUint32(out[gcmNonceSize:gcmNonceSize+4], uint32(len(ct)))
+	copy(out[gcmNonceSize+4:], ct)
+	return out, nil
+}
+
+func sealFileChunkXTS(xc *xts.Cipher, plain []byte, index uint64) ([]byte, error) {
+	padded := pkcs7Pad(plain, 16)
+	ct := make([]byte, len(padded))
+	xc.Encrypt(ct, padded, index+1) // +1 to avoid sector 0 used by catalog
+	out := make([]byte, gcmNonceSize+4+len(ct))
+	// first 12 bytes (nonce area) are left as 0 for XTS
 	binary.BigEndian.PutUint32(out[gcmNonceSize:gcmNonceSize+4], uint32(len(ct)))
 	copy(out[gcmNonceSize+4:], ct)
 	return out, nil
@@ -196,7 +269,11 @@ func openVaultWithPassword(path, password string) error {
 		f.Close()
 		return err
 	}
-	pwdK := deriveKey(password, h.Salt[:], h.ArgonTime, h.ArgonMemoryKiB, h.ArgonThreads)
+	keyLen := uint32(32)
+	if h.Format == formatV1SerpentXTS {
+		keyLen = 64
+	}
+	pwdK := deriveKey(password, h.Salt[:], h.ArgonTime, h.ArgonMemoryKiB, h.ArgonThreads, keyLen)
 	chunkK := append([]byte(nil), pwdK...)
 	zero(pwdK)
 
@@ -207,11 +284,11 @@ func openVaultWithPassword(path, password string) error {
 		f.Close()
 		return err
 	}
-	plainCat, err := decryptCatalog(chunkK, catBlob)
+	plainCat, err := decryptCatalog(chunkK, catBlob, h.Format)
 	if err != nil {
 		zero(chunkK)
 		f.Close()
-		return errors.New("catalog decrypt failed")
+		return errors.New("catalog decrypt failed (check password)")
 	}
 	files, err := catalogFromJSON(plainCat)
 	if err != nil {
@@ -229,12 +306,20 @@ func openVaultWithPassword(path, password string) error {
 	return nil
 }
 
-func createVault(path, password string) error {
+func createVault(path, password, algorithm string) error {
 	globalVault.mu.Lock()
 	defer globalVault.mu.Unlock()
 	if globalVault.f != nil {
 		return errors.New("close the open vault first")
 	}
+
+	format := formatV1AES
+	keyLen := uint32(32)
+	if strings.ToLower(algorithm) == "serpent" {
+		format = formatV1SerpentXTS
+		keyLen = 64
+	}
+
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
@@ -252,12 +337,12 @@ func createVault(path, password string) error {
 	const argonTime = uint32(3)
 	const argonMemKiB = uint32(64 * 1024)
 	const argonThreads = uint32(4)
-	pwdK := deriveKey(password, salt[:], argonTime, argonMemKiB, argonThreads)
+	pwdK := deriveKey(password, salt[:], argonTime, argonMemKiB, argonThreads, keyLen)
 	chunkK := append([]byte(nil), pwdK...)
 	zero(pwdK)
 
 	emptyJSON := []byte("[]")
-	catBlob, err := encryptCatalog(chunkK, emptyJSON)
+	catBlob, err := encryptCatalog(chunkK, emptyJSON, format)
 	if err != nil {
 		zero(chunkK)
 		f.Close()
@@ -267,7 +352,7 @@ func createVault(path, password string) error {
 	dataEnd := uint64(headerSize) + catEncLen
 
 	h := vaultHeader{
-		Format:         formatV1AES,
+		Format:         format,
 		Salt:           salt,
 		ArgonTime:      argonTime,
 		ArgonMemoryKiB: argonMemKiB,
@@ -430,9 +515,20 @@ func addFileToVault(srcPath, folderPrefix string) error {
 		}
 	}
 
-	aead, err := newAESGCM(globalVault.chunkKey)
-	if err != nil {
-		return err
+	var aead cipher.AEAD
+	var xc *xts.Cipher
+	if globalVault.header.Format == formatV1SerpentXTS {
+		var serr error
+		xc, serr = newSerpentXTS(globalVault.chunkKey)
+		if serr != nil {
+			return serr
+		}
+	} else {
+		var serr error
+		aead, serr = newAESGCM(globalVault.chunkKey)
+		if serr != nil {
+			return serr
+		}
 	}
 
 	appendOff := int64(globalVault.header.DataEndOffset)
@@ -448,7 +544,13 @@ func addFileToVault(srcPath, folderPrefix string) error {
 				if n == 0 {
 					break
 				}
-				chunk, serr := sealFileChunk(aead, buf[:n])
+				var chunk []byte
+				var serr error
+				if xc != nil {
+					chunk, serr = sealFileChunkXTS(xc, buf[:n], uint64(nChunks))
+				} else {
+					chunk, serr = sealFileChunk(aead, buf[:n])
+				}
 				if serr != nil {
 					return serr
 				}
@@ -459,7 +561,13 @@ func addFileToVault(srcPath, folderPrefix string) error {
 			if rerr != nil {
 				return rerr
 			}
-			chunk, serr := sealFileChunk(aead, buf)
+			var chunk []byte
+			var serr error
+			if xc != nil {
+				chunk, serr = sealFileChunkXTS(xc, buf, uint64(nChunks))
+			} else {
+				chunk, serr = sealFileChunk(aead, buf)
+			}
 			if serr != nil {
 				return serr
 			}
@@ -545,7 +653,7 @@ func persistCatalogLocked() error {
 		if err != nil {
 			return err
 		}
-		nb, err := encryptCatalog(globalVault.chunkKey, plain)
+		nb, err := encryptCatalog(globalVault.chunkKey, plain, globalVault.header.Format)
 		if err != nil {
 			return err
 		}
@@ -653,8 +761,6 @@ func mimeForPath(name string) string {
 	}
 }
 
-
-
 func zero(b []byte) {
 	for i := range b {
 		b[i] = 0
@@ -712,7 +818,13 @@ func decryptFileBytes(path string) ([]byte, string, error) {
 	globalVault.mu.RUnlock()
 	defer zero(key)
 
-	block, err := newAESGCM(key)
+	var block cipher.AEAD
+	var xc *xts.Cipher
+	if globalVault.header.Format == formatV1SerpentXTS {
+		xc, err = newSerpentXTS(key)
+	} else {
+		block, err = newAESGCM(key)
+	}
 	if err != nil {
 		return nil, "", err
 	}
@@ -725,7 +837,7 @@ func decryptFileBytes(path string) ([]byte, string, error) {
 	off := offset + 4
 	out := make([]byte, 0, plainSize)
 
-	for range int(nChunks) {
+	for i := range int(nChunks) {
 		nonce := make([]byte, gcmNonceSize)
 		if _, err := f.ReadAt(nonce, off); err != nil {
 			return nil, "", err
@@ -742,11 +854,22 @@ func decryptFileBytes(path string) ([]byte, string, error) {
 			return nil, "", err
 		}
 		off += clen
-		pt, err := block.Open(nil, nonce, ct, nil)
-		if err != nil {
-			return nil, "", err
+
+		if xc != nil {
+			pt := make([]byte, len(ct))
+			xc.Decrypt(pt, ct, uint64(i)+1)
+			plain, serr := pkcs7Unpad(pt)
+			if serr != nil {
+				return nil, "", serr
+			}
+			out = append(out, plain...)
+		} else {
+			pt, err := block.Open(nil, nonce, ct, nil)
+			if err != nil {
+				return nil, "", err
+			}
+			out = append(out, pt...)
 		}
-		out = append(out, pt...)
 	}
 	return out, mime, nil
 }
@@ -769,10 +892,18 @@ func streamDecryptedFile(w http.ResponseWriter, r *http.Request, rec vaultFileRe
 	globalVault.mu.RLock()
 	f := globalVault.f
 	key := append([]byte(nil), globalVault.chunkKey...)
+	format := globalVault.header.Format
 	globalVault.mu.RUnlock()
 	defer zero(key)
 
-	block, err := newAESGCM(key)
+	var block cipher.AEAD
+	var xc *xts.Cipher
+	var err error
+	if format == formatV1SerpentXTS {
+		xc, err = newSerpentXTS(key)
+	} else {
+		block, err = newAESGCM(key)
+	}
 	if err != nil {
 		return err
 	}
@@ -784,7 +915,7 @@ func streamDecryptedFile(w http.ResponseWriter, r *http.Request, rec vaultFileRe
 	off := rec.Offset + 4
 	var written int64
 	w.Header().Set("Cache-Control", "no-store")
-	for range int(nChunks) {
+	for i := range int(nChunks) {
 		nonce := make([]byte, gcmNonceSize)
 		if _, err := f.ReadAt(nonce, off); err != nil {
 			return err
@@ -801,10 +932,24 @@ func streamDecryptedFile(w http.ResponseWriter, r *http.Request, rec vaultFileRe
 			return err
 		}
 		off += clen
-		pt, err := block.Open(nil, nonce, ct, nil)
-		if err != nil {
-			return err
+
+		var pt []byte
+		if xc != nil {
+			pt = make([]byte, len(ct))
+			xc.Decrypt(pt, ct, uint64(i)+1)
+			var serr error
+			pt, serr = pkcs7Unpad(pt)
+			if serr != nil {
+				return serr
+			}
+		} else {
+			var serr error
+			pt, serr = block.Open(nil, nonce, ct, nil)
+			if serr != nil {
+				return serr
+			}
 		}
+
 		nw, err := w.Write(pt)
 		if err != nil {
 			return err
@@ -871,10 +1016,17 @@ func streamDecryptedFileRange(w http.ResponseWriter, r *http.Request, rec vaultF
 	globalVault.mu.RLock()
 	f := globalVault.f
 	key := append([]byte(nil), globalVault.chunkKey...)
+	format := globalVault.header.Format
 	globalVault.mu.RUnlock()
 	defer zero(key)
 
-	block, err := newAESGCM(key)
+	var block cipher.AEAD
+	var xc *xts.Cipher
+	if format == formatV1SerpentXTS {
+		xc, err = newSerpentXTS(key)
+	} else {
+		block, err = newAESGCM(key)
+	}
 	if err != nil {
 		return err
 	}
@@ -887,7 +1039,7 @@ func streamDecryptedFileRange(w http.ResponseWriter, r *http.Request, rec vaultF
 
 	var currentPTInt64 int64 = 0
 
-	for range int(nChunks) {
+	for i := range int(nChunks) {
 		nonceOff := off
 		off += gcmNonceSize
 		var clenRaw [4]byte
@@ -896,7 +1048,13 @@ func streamDecryptedFileRange(w http.ResponseWriter, r *http.Request, rec vaultF
 		}
 		off += 4
 		clen := int64(binary.BigEndian.Uint32(clenRaw[:]))
-		ptLen := clen - gcmTagSize
+
+		var ptLen int64
+		if xc != nil {
+			ptLen = clen
+		} else {
+			ptLen = clen - gcmTagSize
+		}
 
 		chunkStart := currentPTInt64
 		chunkEnd := currentPTInt64 + ptLen - 1
@@ -917,10 +1075,24 @@ func streamDecryptedFileRange(w http.ResponseWriter, r *http.Request, rec vaultF
 			return err
 		}
 		off += clen
-		
-		pt, err := block.Open(nil, nonce, ct, nil)
-		if err != nil {
-			return err
+
+		var pt []byte
+		if xc != nil {
+			pt = make([]byte, len(ct))
+			xc.Decrypt(pt, ct, uint64(i)+1)
+			var serr error
+			pt, serr = pkcs7Unpad(pt)
+			if serr != nil {
+				return serr
+			}
+			// Adjust ptLen if padding was removed
+			ptLen = int64(len(pt))
+		} else {
+			var serr error
+			pt, serr = block.Open(nil, nonce, ct, nil)
+			if serr != nil {
+				return serr
+			}
 		}
 
 		writeStart := start - chunkStart
@@ -938,7 +1110,7 @@ func streamDecryptedFileRange(w http.ResponseWriter, r *http.Request, rec vaultF
 			}
 		}
 
-		currentPTInt64 += ptLen
+		currentPTInt64 += int64(len(pt))
 	}
 
 	return nil
@@ -1014,7 +1186,7 @@ func DecryptHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err := streamDecryptedFile(w, r, rec); err != nil {
 		fmt.Printf("ERROR streaming file %s: %v\n", rec.Path, err)
-		// Do not use http.Error here, because headers (like 206 Partial Content) 
+		// Do not use http.Error here, because headers (like 206 Partial Content)
 		// and video bytes have already been sent over the wire.
 		// Writing an error now will corrupt the HTTP Keep-Alive connection
 		// and cause the browser's video player to permanently fail for this vault session.

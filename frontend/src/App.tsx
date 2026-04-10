@@ -288,6 +288,7 @@ export default function App() {
         }
       }
       await refreshRef.current();
+      setAddFileOpen(false);
       if (errs.length > 0) {
         const head = errs.slice(0, 5).join("\n");
         const more = errs.length > 5 ? `\n… and ${errs.length - 5} more` : "";

@@ -101,7 +101,7 @@ func repackVaultLocked() error {
 		if err != nil {
 			return err
 		}
-		enc, err := encryptCatalog(globalVault.chunkKey, plain)
+		enc, err := encryptCatalog(globalVault.chunkKey, plain, globalVault.header.Format)
 		if err != nil {
 			return err
 		}
@@ -119,7 +119,7 @@ func repackVaultLocked() error {
 	if !converged || finalCat == nil || len(lastRecs) == 0 && len(dirs)+len(fileRecs) > 0 {
 		if len(dirs)+len(fileRecs) == 0 {
 			empty := []byte("[]")
-			enc, err := encryptCatalog(globalVault.chunkKey, empty)
+			enc, err := encryptCatalog(globalVault.chunkKey, empty, globalVault.header.Format)
 			if err != nil {
 				return err
 			}
@@ -138,7 +138,7 @@ func repackVaultLocked() error {
 	}
 
 	if len(dirs)+len(fileRecs) == 0 {
-		enc, err := encryptCatalog(globalVault.chunkKey, []byte("[]"))
+		enc, err := encryptCatalog(globalVault.chunkKey, []byte("[]"), globalVault.header.Format)
 		if err != nil {
 			return err
 		}

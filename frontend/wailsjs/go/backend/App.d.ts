@@ -4,6 +4,8 @@ import {backend} from '../models';
 
 export function AddFileFromPathToVault(arg1:string,arg2:string):Promise<void>;
 
+export function AddFileFromUrlToVault(arg1:string,arg2:string):Promise<void>;
+
 export function AddFileToVault(arg1:string):Promise<void>;
 
 export function CreateVaultFolder(arg1:string):Promise<void>;
@@ -12,7 +14,7 @@ export function DecryptURLForVaultPath(arg1:string):Promise<string>;
 
 export function DeleteVaultPath(arg1:string):Promise<void>;
 
-export function FinalizeNewVault(arg1:string,arg2:string):Promise<void>;
+export function FinalizeNewVault(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function GetDecryptedFileBase64(arg1:string):Promise<backend.DecryptedFile>;
 

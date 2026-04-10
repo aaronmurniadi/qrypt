@@ -4,7 +4,7 @@
 
 ![QrypT Screenshot](images/screenshot.png)
 
-**Version**: 0.1.0
+**Version**: 0.2.0
 
 [![Wails](https://img.shields.io/badge/Wails-v2.11.0-blue)](https://wails.io/)
 [![Go](https://img.shields.io/badge/Go-1.24+-00ADD8)](https://golang.org/)
@@ -39,6 +39,17 @@ The author and contributors of QrypT accept no liability for any data loss, secu
 - 🎬 **Rich Media Support**: Preview images, videos, and text files directly in the vault
 - 📁 **Organized Storage**: Create folders and organize files with drag-and-drop
 
+
+## 📋 Release Notes
+
+### [0.2.0] - 2026-04-10
+- **In-memory file decryption**: Files are now decrypted entirely in memory via Wails IPC, eliminating the local HTTP server for file previews
+- **Image preview support**: Added ability to preview images directly in the vault
+- **One-time download links**: Added "Copy link" functionality for generating secure download links
+- **Enhanced UI/UX**: Refined vault sidebar, file selection UI, and improved loading states/transitions
+- **Comprehensive logging**: Implemented logging system for both backend (zerolog) and frontend
+- **Updated branding**: New app icon and refreshed visual design
+- **GitHub Actions workflow**: Added automated release workflow for cross-platform builds
 
 ## 🤝 Contributing
 

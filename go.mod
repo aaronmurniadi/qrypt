@@ -3,6 +3,7 @@ module qrypt
 go 1.24
 
 require (
+	github.com/aead/serpent v0.0.0-20160714141033-fba169763ea6
 	github.com/rs/zerolog v1.35.0
 	github.com/wailsapp/wails/v2 v2.11.0
 	golang.org/x/crypto v0.33.0
